@@ -97,8 +97,12 @@ func inducedSuffixArrayHelper(T []uint64) []int {
 	Cplus := InducePlusSuffixes(T, Cminus, len(T)+1)
 	var SA []int
 	for i := range Cminus {
-		SA = append(SA, Cminus[i]...)
-		SA = append(SA, Cplus[i]...)
+		for j := 0; j < Cminus[i].Len(); j++ {
+			SA = append(SA, Cminus[i].At(j))
+		}
+		for j := 0; j < Cplus[i].Len(); j++ {
+			SA = append(SA, Cplus[i].At(j))
+		}
 	}
 	return SA
 }
@@ -108,48 +112,44 @@ type plusOrMinusType bool
 const plusType plusOrMinusType = true
 const minusType plusOrMinusType = false
 
-func InduceMinusSuffixes(T []uint64, Cstar []Dequeue, σ int) [][]int {
-	Cminus := make([][]int, σ)
-	Cminus[int(T[len(T)-1])] = append(Cminus[int(T[len(T)-1])], len(T)-1) // this line so ungly
+func InduceMinusSuffixes(T []uint64, Cstar []Dequeue, σ int) []Dequeue {
+	Cminus := make([]Dequeue, σ)
+	Cminus[int(T[len(T)-1])].PushBack(len(T) - 1)
 	for a := 1; a < σ; a++ {
-		var c []int
-		for len(Cminus[a]) > 0 {
-			i := Cminus[a][0]
-			Cminus[a] = Cminus[a][1:]
-			c = append(c, i)
+		var c Dequeue
+		for Cminus[a].Len() > 0 {
+			i := Cminus[a].PopFront()
+			c.PushBack(i)
 			if i > 0 && T[i-1] >= uint64(a) {
-				Cminus[int(T[i-1])] = append(Cminus[int(T[i-1])], i-1)
+				Cminus[int(T[i-1])].PushBack(i - 1)
 			}
 		}
 		Cminus[a] = c
 		for j := 0; j < Cstar[a].Len(); j++ {
 			i := Cstar[a].At(j)
-			Cminus[int(T[i-1])] = append(Cminus[int(T[i-1])], i-1)
+			Cminus[int(T[i-1])].PushBack(i - 1)
 		}
-		// for _, i := range Cstar[a] {
-		// 	Cminus[int(T[i-1])] = append(Cminus[int(T[i-1])], i-1)
-		// }
 	}
+
 	return Cminus
 }
 
-func InducePlusSuffixes(T []uint64, Cminus [][]int, σ int) [][]int {
-	Cplus := make([][]int, σ)
+func InducePlusSuffixes(T []uint64, Cminus []Dequeue, σ int) []Dequeue {
+	Cplus := make([]Dequeue, σ)
 	for a := σ - 1; a >= 1; a-- {
-		var c []int
-		for len(Cplus[a]) > 0 {
-			i := Cplus[a][len(Cplus[a])-1]
-			Cplus[a] = Cplus[a][0 : len(Cplus[a])-1]
-			c = append([]int{i}, c...)
+		var c Dequeue
+		for Cplus[a].Len() > 0 {
+			i := Cplus[a].PopBack()
+			c.PushFront(i)
 			if i > 0 && T[i-1] <= uint64(a) {
-				Cplus[int(T[i-1])] = append([]int{i - 1}, Cplus[int(T[i-1])]...)
+				Cplus[int(T[i-1])].PushFront(i - 1)
 			}
 		}
 		Cplus[a] = c
-		for j := len(Cminus[a]) - 1; j >= 0; j-- {
-			i := Cminus[a][j]
+		for j := Cminus[a].Len() - 1; j >= 0; j-- {
+			i := Cminus[a].At(j)
 			if i > 0 && T[i-1] < uint64(a) {
-				Cplus[int(T[i-1])] = append([]int{i - 1}, Cplus[int(T[i-1])]...)
+				Cplus[int(T[i-1])].PushFront(i - 1)
 			}
 		}
 	}
