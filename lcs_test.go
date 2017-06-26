@@ -58,6 +58,45 @@ func TestSuffixArray(t *testing.T) {
 	})
 }
 
+func BenchmarkSA_1000_10(b *testing.B) {
+	b.StopTimer()
+	v := make([]uint64, 1000)
+	rng := rand.New(rand.NewSource(123))
+	for i := range v {
+		v[i] = uint64(rng.Intn(10))
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		jig.InducedSuffixArray(v)
+	}
+}
+
+func BenchmarkSA_10000_10(b *testing.B) {
+	b.StopTimer()
+	v := make([]uint64, 10000)
+	rng := rand.New(rand.NewSource(123))
+	for i := range v {
+		v[i] = uint64(rng.Intn(10))
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		jig.InducedSuffixArray(v)
+	}
+}
+
+func BenchmarkSA_100000_10(b *testing.B) {
+	b.StopTimer()
+	v := make([]uint64, 100000)
+	rng := rand.New(rand.NewSource(123))
+	for i := range v {
+		v[i] = uint64(rng.Intn(10))
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		jig.InducedSuffixArray(v)
+	}
+}
+
 // func TestLCS(t *testing.T) {
 // 	Convey("LCS finds the longest common substring", t, func() {
 // 		Convey("at the start of one string and end of the other", func() {

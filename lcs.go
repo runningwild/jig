@@ -88,9 +88,9 @@ func inducedSuffixArrayHelper(T []uint64) []int {
 		}
 		return i > j
 	})
-	Cstar := make([][]int, len(T)+1)
+	Cstar := make([]Dequeue, len(T)+1)
 	for _, v := range P1 {
-		Cstar[int(T[v])] = append(Cstar[int(T[v])], v)
+		Cstar[int(T[v])].PushBack(v)
 	}
 
 	Cminus := InduceMinusSuffixes(T, Cstar, len(T)+1)
@@ -108,10 +108,9 @@ type plusOrMinusType bool
 const plusType plusOrMinusType = true
 const minusType plusOrMinusType = false
 
-func InduceMinusSuffixes(T []uint64, Cstar [][]int, σ int) [][]int {
+func InduceMinusSuffixes(T []uint64, Cstar []Dequeue, σ int) [][]int {
 	Cminus := make([][]int, σ)
 	Cminus[int(T[len(T)-1])] = append(Cminus[int(T[len(T)-1])], len(T)-1) // this line so ungly
-	// for _, a := range []int{'i', 'm', 'p', 's'} {
 	for a := 1; a < σ; a++ {
 		var c []int
 		for len(Cminus[a]) > 0 {
@@ -123,9 +122,13 @@ func InduceMinusSuffixes(T []uint64, Cstar [][]int, σ int) [][]int {
 			}
 		}
 		Cminus[a] = c
-		for _, i := range Cstar[a] {
+		for j := 0; j < Cstar[a].Len(); j++ {
+			i := Cstar[a].At(j)
 			Cminus[int(T[i-1])] = append(Cminus[int(T[i-1])], i-1)
 		}
+		// for _, i := range Cstar[a] {
+		// 	Cminus[int(T[i-1])] = append(Cminus[int(T[i-1])], i-1)
+		// }
 	}
 	return Cminus
 }
