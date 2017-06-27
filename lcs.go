@@ -184,6 +184,7 @@ func main() {
 		panic(err)
 	}
 	for _, lcsfunc := range []func(a, b []uint64) (int, int, int){LCS, LCS2} {
+		fmt.Printf("---------------------------------------------\n")
 		linesA := strings.Split(string(dataA), "\n")
 		linesB := strings.Split(string(dataB), "\n")
 		v, max := stringsToUint64s([][]string{linesA, linesB})
@@ -192,7 +193,6 @@ func main() {
 		substrs := make(map[uint64]*substr)
 		start := time.Now()
 		for {
-			// fmt.Printf("---------------------------------------------\n")
 			// fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
 			lscStart := time.Now()
 			ai, bi, length := lcsfunc(v[0], v[1])
@@ -328,8 +328,8 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 	start := time.Now()
 	sa := InducedSuffixArray(input)
 	fmt.Printf("SA time: %v\n", time.Since(start))
-	index := -1
-	length = 0
+
+	var pairs [][3]int
 	for i := 0; i < len(sa)-1; i++ {
 		if (sa[i] < middle) == (sa[i+1] < middle) {
 			continue
@@ -346,23 +346,53 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 			aoff = sa[i+1]
 			boff = sa[i] - middle - 1
 		}
-		var k int
-		for k = 0; k+aoff < len(a) && k+boff < len(b) && a[k+aoff] == b[k+boff]; k++ {
+		if a[aoff] != b[boff] {
+			continue
 		}
-
-		if k > length {
-			length = k
-			index = i
-		}
+		pairs = append(pairs, [3]int{aoff, boff, 0})
 	}
-	if index == -1 {
+	if len(pairs) == 0 {
 		return 0, 0, -1
 	}
-	ai, bi = sa[index], sa[index+1]
-	if ai > middle {
-		ai, bi = bi, ai
+
+	// New cool stuff here
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i][0] != pairs[j][0] {
+			return pairs[i][0] < pairs[j][0]
+		}
+		return pairs[i][1] < pairs[j][1]
+	})
+	// for _, p := range pairs {
+	// 	fmt.Printf("%v\n", p)
+	// }
+	for i := range pairs {
+		if pairs[i][2] > 0 {
+			continue
+		}
+		prev := i
+		for {
+			// fmt.Printf("Seeking for %v + 1\n", pairs[prev])
+			dex := sort.Search(len(pairs), func(idx int) bool {
+				return pairs[idx][0] > pairs[prev][0]+1 ||
+					(pairs[idx][0] == pairs[prev][0]+1 && pairs[idx][1] >= pairs[prev][1]+1)
+			})
+			if dex >= len(pairs) {
+				break
+			}
+			if pairs[dex][0] != pairs[prev][0]+1 || pairs[dex][1] != pairs[prev][1]+1 {
+				break
+			}
+			// fmt.Printf("dex(%d): %v\n", dex, pairs[dex])
+			pairs[dex][2] = 1
+			prev = dex
+		}
+		if pairs[prev][0]-pairs[i][0]+1 > length {
+			length = pairs[prev][0] - pairs[i][0] + 1
+			ai, bi = pairs[i][0], pairs[i][1]
+			// fmt.Printf("Setting LCS: %v %v %v\n", ai, bi, length)
+		}
 	}
-	bi -= middle + 1
+
 	return
 }
 
