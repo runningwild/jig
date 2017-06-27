@@ -372,10 +372,13 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 		prev := i
 		for {
 			// fmt.Printf("Seeking for %v + 1\n", pairs[prev])
-			dex := sort.Search(len(pairs), func(idx int) bool {
-				return pairs[idx][0] > pairs[prev][0]+1 ||
-					(pairs[idx][0] == pairs[prev][0]+1 && pairs[idx][1] >= pairs[prev][1]+1)
+			// We know the value we are looking for is after prev, so restrict our search to that.
+			tp := pairs[prev:]
+			dex := sort.Search(len(tp), func(idx int) bool {
+				return tp[idx][0] > pairs[prev][0]+1 ||
+					(tp[idx][0] == pairs[prev][0]+1 && tp[idx][1] >= pairs[prev][1]+1)
 			})
+			dex += prev
 			if dex >= len(pairs) {
 				break
 			}
