@@ -1,4 +1,4 @@
-package jig
+package main
 
 type Dequeue struct {
 	back, front []int
@@ -33,19 +33,15 @@ func (d *Dequeue) PopFront() int {
 
 // popSide pops from a, using b to rearrange if necessary
 func popSide(a, b *[]int) int {
-	if len(*a)+len(*b) == 0 {
-		panic("cannot Pop an empty Dequeue")
+	if len(*b)+len(*a) == 0 {
+		panic("cannot Pop and empty Dequeue")
 	}
-	if len(*a) == 0 {
-		amt := (len(*b) + 1) / 2
-		*a = make([]int, amt)
-		for i := range *a {
-			(*a)[i] = (*b)[amt-i-1]
-		}
-		(*b) = (*b)[amt:]
+	if len(*a) > 0 {
+		v := (*a)[len(*a)-1]
+		*a = (*a)[:len(*a)-1]
+		return v
 	}
-	v := (*a)[len(*a)-1]
-	*a = (*a)[0 : len(*a)-1]
+	v := (*b)[0]
+	*b = (*b)[1:]
 	return v
-
 }

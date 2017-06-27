@@ -1,9 +1,12 @@
-package jig
+package main
 
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"sort"
+	"strings"
+	"time"
 )
 
 var (
@@ -19,7 +22,7 @@ func stringToUint64s(s string) []uint64 {
 	return v
 }
 
-func main() {
+func main2() {
 	in := stringToUint64s("abcdefghij")
 	skew := InducedSuffixArray(in)
 	dumb := DumbSuffixArray(in)
@@ -27,8 +30,6 @@ func main() {
 	fmt.Printf("Dumb: %v\n", dumb)
 }
 
-// INDUCEDSUFFIXARRAY REQUIRES THAT NO ELEMENT IN S IS 0.
-// elements in s should be in the range [1, len(s)].
 func InducedSuffixArray(s []uint64) []int {
 	m := make(map[uint64]uint64)
 	for _, v := range s {
@@ -50,15 +51,19 @@ func InducedSuffixArray(s []uint64) []int {
 	return inducedSuffixArrayHelper(T)
 }
 
+// inducedSuffixArrayHelper requires that no element in T is 0. (I thikn?)
+// elements in s should be in the range [1, len(s)].
 func inducedSuffixArrayHelper(T []uint64) []int {
 	if len(T) == 0 {
 		return []int{}
 	}
-	// s = append(s, 0)
-	// SA := make([]int, len(s))
 	t := make([]plusOrMinusType, len(T)) // true indicates - type
 	t[len(t)-1] = minusType
+	σ := T[len(T)-1]
 	for i := len(T) - 2; i >= 0; i-- {
+		if T[i] > σ {
+			σ = T[i]
+		}
 		if T[i] != T[i+1] {
 			if T[i] < T[i+1] {
 				t[i] = plusType
@@ -93,9 +98,9 @@ func inducedSuffixArrayHelper(T []uint64) []int {
 		Cstar[int(T[v])].PushBack(v)
 	}
 
-	Cminus := InduceMinusSuffixes(T, Cstar, len(T)+1)
-	Cplus := InducePlusSuffixes(T, Cminus, len(T)+1)
-	var SA []int
+	Cminus := InduceMinusSuffixes(T, Cstar, int(σ)+1)
+	Cplus := InducePlusSuffixes(T, Cminus, int(σ)+1)
+	SA := make([]int, 0, len(T))
 	for i := range Cminus {
 		for j := 0; j < Cminus[i].Len(); j++ {
 			SA = append(SA, Cminus[i].At(j))
@@ -168,72 +173,97 @@ func boolsAsInts(b []plusOrMinusType) string {
 	return v
 }
 
-func main2() {
-	// flag.Parse()
-	// dataA, err := ioutil.ReadFile(*filea)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// dataB, err := ioutil.ReadFile(*fileb)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// linesA := strings.Split(string(dataA), "\n")
-	// linesB := strings.Split(string(dataB), "\n")
-	// v, max := stringsToUint64s([][]string{linesA, linesB})
-	// mapping := make(map[uint64]uint64)
-	// substrs := make(map[uint64]*substr)
-	// for {
-	// 	fmt.Printf("---------------------------------------------\n")
-	// 	fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
-	// 	ai, bi, length := LCS(v[0], v[1])
-	// 	if length <= 0 {
-	// 		break
-	// 	}
-	// 	fmt.Printf("Pos(%d %d), Length %d\n", ai, bi, length)
-	// 	v[0][ai] = max
-	// 	v[1][bi] = max + 1
-	// 	substrs[max] = &substr{start: ai, length: length}
-	// 	substrs[max+1] = &substr{start: bi, length: length}
-	// 	mapping[max] = max + 1
-	// 	max += 2
+func main() {
+	flag.Parse()
+	dataA, err := ioutil.ReadFile(*filea)
+	if err != nil {
+		panic(err)
+	}
+	dataB, err := ioutil.ReadFile(*fileb)
+	if err != nil {
+		panic(err)
+	}
+	for _, lcsfunc := range []func(a, b []uint64) (int, int, int){LCS, LCS2} {
+		linesA := strings.Split(string(dataA), "\n")
+		linesB := strings.Split(string(dataB), "\n")
+		v, max := stringsToUint64s([][]string{linesA, linesB})
+		// fmt.Printf("Time to convert: %v\n", time.Since(start))
+		mapping := make(map[uint64]uint64)
+		substrs := make(map[uint64]*substr)
+		start := time.Now()
+		for {
+			// fmt.Printf("---------------------------------------------\n")
+			// fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
+			lscStart := time.Now()
+			ai, bi, length := lcsfunc(v[0], v[1])
+			fmt.Printf("LCS Time: %v\n", time.Since(lscStart))
+			if length <= 0 {
+				break
+			}
+			fmt.Printf("Pos(%d %d), Length %d\n", ai, bi, length)
+			v[0][ai] = max
+			v[1][bi] = max + 1
+			substrs[max] = &substr{start: ai, length: length}
+			substrs[max+1] = &substr{start: bi, length: length}
+			mapping[max] = max + 1
+			max += 2
 
-	// 	for i := ai + 1; i+length-1 < len(v[0]); i++ {
-	// 		v[0][i] = v[0][i+length-1]
-	// 	}
-	// 	v[0] = v[0][0 : len(v[0])-length+1]
-	// 	for i := range v[0] {
-	// 		fmt.Printf("%d: %d\n", i, v[0][i])
-	// 	}
+			for i := ai + 1; i+length-1 < len(v[0]); i++ {
+				v[0][i] = v[0][i+length-1]
+			}
+			v[0] = v[0][0 : len(v[0])-length+1]
+			// for i := range v[0] {
+			// 	fmt.Printf("%d: %d\n", i, v[0][i])
+			// }
 
-	// 	for i := bi + 1; i+length-1 < len(v[1]); i++ {
-	// 		v[1][i] = v[1][i+length-1]
-	// 	}
-	// 	v[1] = v[1][0 : len(v[1])-length+1]
-	// }
-	// // liness := [][]string{linesA, linesB}
-	// for i := range v {
-	// 	add := 0
-	// 	for j := range v[i] {
-	// 		if s, ok := substrs[v[i][j]]; ok {
-	// 			s.start += add
-	// 			add += s.length
-	// 			fmt.Printf("Lines %d %d: ", i, s.start)
-	// 			// fmt.Printf("%s\n", liness[i][s.start])
-	// 		} else {
-	// 			add++
-	// 		}
-	// 	}
-	// }
-	// fmt.Printf("%v\n%v\n%v\n", v[0], v[1], mapping)
-	// fmt.Printf("A:\n")
-	// for _, v := range v[0] {
-	// 	fmt.Printf("%d -> %v\n", v, substrs[v])
-	// }
-	// fmt.Printf("B:\n")
-	// for _, v := range v[1] {
-	// 	fmt.Printf("%d -> %v\n", v, substrs[v])
-	// }
+			for i := bi + 1; i+length-1 < len(v[1]); i++ {
+				v[1][i] = v[1][i+length-1]
+			}
+			v[1] = v[1][0 : len(v[1])-length+1]
+		}
+		fmt.Printf("Finished after %v\n", time.Since(start))
+		// liness := [][]string{linesA, linesB}
+		for i := range v {
+			add := 0
+			for j := range v[i] {
+				if s, ok := substrs[v[i][j]]; ok {
+					s.start += add
+					add += s.length
+					// fmt.Printf("Lines %d %d: ", i, s.start)
+					// fmt.Printf("%s\n", liness[i][s.start])
+				} else {
+					add++
+				}
+			}
+		}
+		fmt.Printf("%v\n%v\n%v\n", v[0], v[1], mapping)
+		fmt.Printf("A:\n")
+		for _, v := range v[0] {
+			fmt.Printf("%d -> %v\n", v, substrs[v])
+		}
+		fmt.Printf("B:\n")
+		for _, v := range v[1] {
+			fmt.Printf("%d -> %v\n", v, substrs[v])
+		}
+		fmt.Printf("Finished more after %v\n", time.Since(start))
+	}
+}
+func stringsToUint64s(v [][]string) ([][]uint64, uint64) {
+	var ret [][]uint64
+	var count uint64
+	unique := make(map[string]uint64)
+	for i := range v {
+		var cur []uint64
+		for _, s := range v[i] {
+			if _, ok := unique[s]; !ok {
+				unique[s] = count
+				count++
+			}
+			cur = append(cur, unique[s])
+		}
+		ret = append(ret, cur)
+	}
+	return ret, count
 }
 
 type substr struct {
@@ -277,6 +307,65 @@ func DumbSuffixArray(v []uint64) []int {
 // LCS finds the Longest Common Substring between two 'strings' of uint64.  ai and bi are the start
 // of the substring in each of the input arrays, and length is the length of the common substring.
 // If there is no common substring, ai and bi will be -1 and length will be 0.
+func LCS2(a, b []uint64) (ai, bi, length int) {
+	var input []uint64
+	var max uint64
+	for _, v := range a {
+		input = append(input, v)
+		if v > max {
+			max = v
+		}
+	}
+	middle := len(input)
+	input = append(input, 0)
+	for _, v := range b {
+		input = append(input, v)
+		if v > max {
+			max = v
+		}
+	}
+	input[middle] = max + 1
+	start := time.Now()
+	sa := InducedSuffixArray(input)
+	fmt.Printf("SA time: %v\n", time.Since(start))
+	index := -1
+	length = 0
+	for i := 0; i < len(sa)-1; i++ {
+		if (sa[i] < middle) == (sa[i+1] < middle) {
+			continue
+		}
+		if sa[i] == middle || sa[i+1] == middle {
+			continue
+		}
+		var aoff, boff int
+		if sa[i] < middle {
+			aoff = sa[i]
+			boff = sa[i+1] - middle - 1
+		}
+		if sa[i+1] < middle {
+			aoff = sa[i+1]
+			boff = sa[i] - middle - 1
+		}
+		var k int
+		for k = 0; k+aoff < len(a) && k+boff < len(b) && a[k+aoff] == b[k+boff]; k++ {
+		}
+
+		if k > length {
+			length = k
+			index = i
+		}
+	}
+	if index == -1 {
+		return 0, 0, -1
+	}
+	ai, bi = sa[index], sa[index+1]
+	if ai > middle {
+		ai, bi = bi, ai
+	}
+	bi -= middle + 1
+	return
+}
+
 func LCS(a, b []uint64) (ai, bi, length int) {
 	// Construct a single list containing all of the suffixes for each string.
 	var sufs []suf
@@ -287,6 +376,7 @@ func LCS(a, b []uint64) (ai, bi, length int) {
 		sufs = append(sufs, suf{suffix: b[i:], start: i, source: 1})
 	}
 
+	start := time.Now()
 	// Sort the suffixes lexicographically
 	sort.Slice(sufs, func(i, j int) bool {
 		a := sufs[i].suffix
@@ -299,6 +389,7 @@ func LCS(a, b []uint64) (ai, bi, length int) {
 		}
 		return false
 	})
+	fmt.Printf("SA Time: %v\n", time.Since(start))
 
 	// Find adjacent pairs in the array such that the two elements don't both come from the same
 	// string.  Such pairs indicate a common substring, and all common substrings will be

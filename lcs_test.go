@@ -58,43 +58,42 @@ func TestSuffixArray(t *testing.T) {
 	})
 }
 
+func doBench(b *testing.B, length, alphabet int) {
+	b.StopTimer()
+	v := make([]uint64, length)
+	rng := rand.New(rand.NewSource(123))
+	for i := range v {
+		v[i] = uint64(rng.Intn(alphabet))
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		jig.InducedSuffixArray(v)
+	}
+}
+
 func BenchmarkSA_1000_10(b *testing.B) {
-	b.StopTimer()
-	v := make([]uint64, 1000)
-	rng := rand.New(rand.NewSource(123))
-	for i := range v {
-		v[i] = uint64(rng.Intn(10))
-	}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		jig.InducedSuffixArray(v)
-	}
+	doBench(b, 1000, 10)
 }
-
 func BenchmarkSA_10000_10(b *testing.B) {
-	b.StopTimer()
-	v := make([]uint64, 10000)
-	rng := rand.New(rand.NewSource(123))
-	for i := range v {
-		v[i] = uint64(rng.Intn(10))
-	}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		jig.InducedSuffixArray(v)
-	}
+	doBench(b, 10000, 10)
 }
-
 func BenchmarkSA_100000_10(b *testing.B) {
-	b.StopTimer()
-	v := make([]uint64, 100000)
-	rng := rand.New(rand.NewSource(123))
-	for i := range v {
-		v[i] = uint64(rng.Intn(10))
-	}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		jig.InducedSuffixArray(v)
-	}
+	doBench(b, 100000, 10)
+}
+func BenchmarkSA_1000000_10(b *testing.B) {
+	doBench(b, 1000000, 10)
+}
+func BenchmarkSA_1000_1000(b *testing.B) {
+	doBench(b, 1000, 1000)
+}
+func BenchmarkSA_10000_1000(b *testing.B) {
+	doBench(b, 10000, 1000)
+}
+func BenchmarkSA_100000_1000(b *testing.B) {
+	doBench(b, 100000, 1000)
+}
+func BenchmarkSA_1000000_1000(b *testing.B) {
+	doBench(b, 1000000, 1000)
 }
 
 // func TestLCS(t *testing.T) {
