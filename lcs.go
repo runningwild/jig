@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -183,11 +183,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	for _, lcsfunc := range []func(a, b []uint64) (int, int, int){LCS, LCS2} {
+	for _, lcsfunc := range []func(a, b []uint64) []commonSubstring{LCS2} {
 		fmt.Printf("---------------------------------------------\n")
-		linesA := strings.Split(string(dataA), "\n")
-		linesB := strings.Split(string(dataB), "\n")
-		v, max := stringsToUint64s([][]string{linesA, linesB})
+		linesA := bytes.Split(dataA, []byte("\n"))
+		linesB := bytes.Split(dataB, []byte("\n"))
+		v, max := bytesToUint64s([][][]byte{linesA, linesB})
 		// fmt.Printf("Time to convert: %v\n", time.Since(start))
 		mapping := make(map[uint64]uint64)
 		substrs := make(map[uint64]*substr)
@@ -195,31 +195,34 @@ func main() {
 		for {
 			// fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
 			lscStart := time.Now()
-			ai, bi, length := lcsfunc(v[0], v[1])
+			css := lcsfunc(v[0], v[1])
 			fmt.Printf("LCS Time: %v\n", time.Since(lscStart))
-			if length <= 0 {
+			if len(css) <= 0 {
 				break
 			}
-			fmt.Printf("Pos(%d %d), Length %d\n", ai, bi, length)
-			v[0][ai] = max
-			v[1][bi] = max + 1
-			substrs[max] = &substr{start: ai, length: length}
-			substrs[max+1] = &substr{start: bi, length: length}
-			mapping[max] = max + 1
-			max += 2
+			// ai, bi, length :=
+			for _, cs := range css {
+				fmt.Printf("Pos(%d %d), Length %d\n", cs.ai, cs.bi, cs.length)
+				v[0][cs.ai] = max
+				v[1][cs.bi] = max + 1
+				substrs[max] = &substr{start: cs.ai, length: cs.length}
+				substrs[max+1] = &substr{start: cs.bi, length: cs.length}
+				mapping[max] = max + 1
+				max += 2
 
-			for i := ai + 1; i+length-1 < len(v[0]); i++ {
-				v[0][i] = v[0][i+length-1]
-			}
-			v[0] = v[0][0 : len(v[0])-length+1]
-			// for i := range v[0] {
-			// 	fmt.Printf("%d: %d\n", i, v[0][i])
-			// }
+				for i := cs.ai + 1; i+cs.length-1 < len(v[0]); i++ {
+					v[0][i] = v[0][i+cs.length-1]
+				}
+				v[0] = v[0][0 : len(v[0])-cs.length+1]
+				// for i := range v[0] {
+				// 	fmt.Printf("%d: %d\n", i, v[0][i])
+				// }
 
-			for i := bi + 1; i+length-1 < len(v[1]); i++ {
-				v[1][i] = v[1][i+length-1]
+				for i := cs.bi + 1; i+cs.length-1 < len(v[1]); i++ {
+					v[1][i] = v[1][i+cs.length-1]
+				}
+				v[1] = v[1][0 : len(v[1])-cs.length+1]
 			}
-			v[1] = v[1][0 : len(v[1])-length+1]
 		}
 		fmt.Printf("Finished after %v\n", time.Since(start))
 		// liness := [][]string{linesA, linesB}
@@ -248,13 +251,14 @@ func main() {
 		fmt.Printf("Finished more after %v\n", time.Since(start))
 	}
 }
-func stringsToUint64s(v [][]string) ([][]uint64, uint64) {
+func bytesToUint64s(v [][][]byte) ([][]uint64, uint64) {
 	var ret [][]uint64
 	var count uint64
 	unique := make(map[string]uint64)
 	for i := range v {
 		var cur []uint64
-		for _, s := range v[i] {
+		for _, b := range v[i] {
+			s := string(b)
 			if _, ok := unique[s]; !ok {
 				unique[s] = count
 				count++
@@ -307,7 +311,11 @@ func DumbSuffixArray(v []uint64) []int {
 // LCS finds the Longest Common Substring between two 'strings' of uint64.  ai and bi are the start
 // of the substring in each of the input arrays, and length is the length of the common substring.
 // If there is no common substring, ai and bi will be -1 and length will be 0.
-func LCS2(a, b []uint64) (ai, bi, length int) {
+type commonSubstring struct {
+	ai, bi, length int
+}
+
+func LCS2(a, b []uint64) []commonSubstring {
 	var input []uint64
 	var max uint64
 	for _, v := range a {
@@ -352,7 +360,7 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 		pairs = append(pairs, [3]int{aoff, boff, 0})
 	}
 	if len(pairs) == 0 {
-		return 0, 0, -1
+		return nil
 	}
 
 	// New cool stuff here
@@ -365,6 +373,7 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 	// for _, p := range pairs {
 	// 	fmt.Printf("%v\n", p)
 	// }
+	var cs commonSubstring
 	for i := range pairs {
 		if pairs[i][2] > 0 {
 			continue
@@ -389,14 +398,17 @@ func LCS2(a, b []uint64) (ai, bi, length int) {
 			pairs[dex][2] = 1
 			prev = dex
 		}
-		if pairs[prev][0]-pairs[i][0]+1 > length {
-			length = pairs[prev][0] - pairs[i][0] + 1
-			ai, bi = pairs[i][0], pairs[i][1]
+		if pairs[prev][0]-pairs[i][0]+1 > cs.length {
+			cs = commonSubstring{
+				length: pairs[prev][0] - pairs[i][0] + 1,
+				ai:     pairs[i][0],
+				bi:     pairs[i][1],
+			}
 			// fmt.Printf("Setting LCS: %v %v %v\n", ai, bi, length)
 		}
 	}
 
-	return
+	return []commonSubstring{cs}
 }
 
 func LCS(a, b []uint64) (ai, bi, length int) {
