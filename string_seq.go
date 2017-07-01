@@ -2,8 +2,11 @@ package jig
 
 import (
 	"bytes"
-	"hash/crc64"
+	crand "crypto/rand"
+	"hash/crc32"
+	"math/rand"
 	"sync"
+	"time"
 )
 
 type StringSeq struct {
@@ -12,29 +15,40 @@ type StringSeq struct {
 	pow      uint
 	count    uint64
 	maxSlice int
+	salt     []byte
 
-	tab *crc64.Table
+	tab *crc32.Table
 }
 
 type entry struct {
-	crc uint64
+	crc uint32
 	id  uint64
 	b   []byte
 }
 
 func MakeStringSeq() *StringSeq {
 	var pow uint = 10
+	var b [4]byte
+	n, err := crand.Read(b[:])
+	if n != 4 || err != nil {
+		rng := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
+		b[0] = byte(rng.Intn(256))
+		b[1] = byte(rng.Intn(256))
+		b[2] = byte(rng.Intn(256))
+		b[3] = byte(rng.Intn(256))
+	}
 	return &StringSeq{
-		m:   make([][]*entry, 1<<pow),
-		pow: pow,
-		tab: crc64.MakeTable(crc64.ECMA),
+		m:    make([][]*entry, 1<<pow),
+		pow:  pow,
+		tab:  crc32.MakeTable(crc32.Castagnoli),
+		salt: b[:],
 	}
 }
 
 // s.mu must be held
 func (s *StringSeq) double() {
 	s.pow += 2
-	mask := uint64(1<<s.pow - 1)
+	mask := uint32(1<<s.pow - 1)
 	nm := make([][]*entry, 1<<s.pow)
 	for _, entries := range s.m {
 		for _, e := range entries {
@@ -52,12 +66,9 @@ func (s *StringSeq) double() {
 	}
 }
 
-func find(entries []*entry, index int, crc uint64, b []byte) (uint64, bool) {
+func find(entries []*entry, index int, crc uint32, b []byte) (uint64, bool) {
 	for _, e := range entries {
-		if e.crc != crc {
-			continue
-		}
-		if bytes.Equal(b, e.b) {
+		if e.crc == crc && bytes.Equal(b, e.b) {
 			return e.id, true
 		}
 	}
@@ -65,14 +76,16 @@ func find(entries []*entry, index int, crc uint64, b []byte) (uint64, bool) {
 }
 
 func (s *StringSeq) ID(b []byte) uint64 {
-	crc := crc64.Checksum(b, s.tab)
+	crc := crc32.Checksum(b, s.tab)
+	crc = crc32.Update(crc, s.tab, s.salt)
+
 	s.mu.Lock()
 	pow := s.pow
-	index := int(crc & uint64(1<<pow-1))
+	index := int(crc & uint32(1<<pow-1))
 	entries := s.m[index]
+	s.mu.Unlock()
 
 	// No need to hold the lock while we're looking for this entry.
-	s.mu.Unlock()
 	if n, ok := find(entries, index, crc, b); ok {
 		return n
 	}
@@ -86,7 +99,7 @@ func (s *StringSeq) ID(b []byte) uint64 {
 	// to make sure we don't accidentally write two entries with the same data.
 	s.mu.Lock()
 	if s.pow != pow || len(s.m[index]) != len(entries) {
-		index = int(crc & uint64(1<<s.pow-1))
+		index = int(crc & uint32(1<<s.pow-1))
 		if s.pow == pow {
 			// If we didn't resize we can just resume searching from where we left off.
 			entries = s.m[index][len(entries):]
@@ -104,7 +117,7 @@ func (s *StringSeq) ID(b []byte) uint64 {
 	if len(s.m[index]) > s.maxSlice {
 		s.maxSlice = len(s.m[index])
 	}
-	// Double our table when we have to go through more than 50 at a time.  This number was reached
+	// Double our table when we have to go through more than 30 at a time.  This number was reached
 	// experimentally, the optimal threshold probably varies wildly across platforms.
 	if s.maxSlice > 30 {
 		s.double()
@@ -117,5 +130,4 @@ func (s *StringSeq) Max() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.count + 1
-	// return uint64(len(s.m) + 1)
 }
