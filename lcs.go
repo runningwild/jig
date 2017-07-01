@@ -176,7 +176,7 @@ func boolsAsInts(b []plusOrMinusType) string {
 
 var readersToLinesBufferSize int = 100000
 
-func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
+func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 	var mu sync.RWMutex
 	var finalErr error
 
@@ -249,7 +249,7 @@ func main() {
 		panic(err)
 	}
 	start := time.Now()
-	v, max, err := readersToLines(fa, fb)
+	v, max, err := ReadersToLines(fa, fb)
 	fa.Close()
 	fb.Close()
 	if err != nil {

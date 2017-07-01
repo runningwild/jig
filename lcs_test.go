@@ -15,6 +15,7 @@ import (
 
 func TestReadersToLines(t *testing.T) {
 	inputs := [][2][]byte{
+		[2][]byte{[]byte("a\n\n\nb\n\n\n"), []byte("a\n\n\nb\n\n\nc")},
 		[2][]byte{makeLinearInput(100), makeLinearInput(150)},
 		[2][]byte{makeRandomInput(100, 0), makeRandomEdits(makeRandomInput(100, 0), 1, 0)},
 		[2][]byte{makeRandomInput(100, 1), makeRandomEdits(makeRandomInput(100, 1), 5, 0)},
@@ -28,7 +29,7 @@ func TestReadersToLines(t *testing.T) {
 	Convey("ReadersToLines", t, func() {
 		Convey("can properly split several newlines in a row", func() {
 			input := []byte("a\n\n\nb\n\n\n")
-			lines, max, err := readersToLines(bytes.NewBuffer(input), bytes.NewBuffer(input))
+			lines, max, err := ReadersToLines(bytes.NewBuffer(input), bytes.NewBuffer(input))
 			So(err, ShouldBeNil)
 			So(max, ShouldEqual, 4)
 			So(lines, shouldMatchLines, [][]uint64{[]uint64{0, 1, 1, 2, 1, 1}, []uint64{0, 1, 1, 2, 1, 1}})
@@ -42,9 +43,9 @@ func TestReadersToLines(t *testing.T) {
 					}()
 					for _, size := range []int{1, 2, 5, 10, 100, 100000} {
 						readersToLinesBufferSize = size
-						lines, max, err := readersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+						lines, max, err := ReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
 						So(err, ShouldBeNil)
-						wantLines, wantMax, _ := readersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+						wantLines, wantMax, _ := simpleReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
 						So(max, ShouldEqual, wantMax)
 						So(lines, shouldMatchLines, wantLines)
 					}
@@ -61,7 +62,7 @@ func doBenchReadersToLines(b *testing.B, lines, edits int) {
 	inputB := makeRandomEdits(inputA, edits, 123)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		readersToLines(bytes.NewBuffer(inputA), bytes.NewBuffer(inputB))
+		ReadersToLines(bytes.NewBuffer(inputA), bytes.NewBuffer(inputB))
 	}
 }
 
@@ -223,6 +224,13 @@ func simpleReadersToLines(ra, rb io.Reader) ([][]uint64, uint64, error) {
 	}
 	linesA := strings.Split(string(a), "\n")
 	linesB := strings.Split(string(b), "\n")
+	// Strip the last line if it's empty
+	if len(linesA) > 0 && linesA[len(linesA)-1] == "" {
+		linesA = linesA[0 : len(linesA)-1]
+	}
+	if len(linesB) > 0 && linesB[len(linesB)-1] == "" {
+		linesB = linesB[0 : len(linesB)-1]
+	}
 	var vs [][]uint64
 	m := make(map[string]uint64)
 	for _, lines := range [][]string{linesA, linesB} {
