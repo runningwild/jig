@@ -34,13 +34,13 @@ func TestReadersToLines(t *testing.T) {
 			So(lines, shouldMatchLines, [][]uint64{[]uint64{0, 1, 1, 2, 1, 1}, []uint64{0, 1, 1, 2, 1, 1}})
 		})
 		Convey("matches the simple reader", func() {
-			Convey("with a very small buffer size", func() {
+			Convey("with a different buffer sizes", func() {
 				for _, input := range inputs {
 					prevSize := readersToLinesBufferSize
 					defer func() {
 						readersToLinesBufferSize = prevSize
 					}()
-					for _, size := range []int{1, 2, 5, 10} {
+					for _, size := range []int{1, 2, 5, 10, 100, 100000} {
 						readersToLinesBufferSize = size
 						lines, max, err := readersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
 						So(err, ShouldBeNil)
@@ -53,6 +53,44 @@ func TestReadersToLines(t *testing.T) {
 
 		})
 	})
+}
+
+func doBenchReadersToLines(b *testing.B, lines, edits int) {
+	b.StopTimer()
+	inputA := makeRandomInput(lines, 123)
+	inputB := makeRandomEdits(inputA, edits, 123)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		readersToLines(bytes.NewBuffer(inputA), bytes.NewBuffer(inputB))
+	}
+}
+
+func BenchmarkReadersToLines_1000_Same(b *testing.B) {
+	doBenchReadersToLines(b, 1000, 0)
+}
+func BenchmarkReadersToLines_1000_Similar(b *testing.B) {
+	doBenchReadersToLines(b, 1000, 3)
+}
+func BenchmarkReadersToLines_1000_Different(b *testing.B) {
+	doBenchReadersToLines(b, 1000, 50)
+}
+func BenchmarkReadersToLines_10000_Same(b *testing.B) {
+	doBenchReadersToLines(b, 10000, 0)
+}
+func BenchmarkReadersToLines_10000_Similar(b *testing.B) {
+	doBenchReadersToLines(b, 10000, 3)
+}
+func BenchmarkReadersToLines_10000_Different(b *testing.B) {
+	doBenchReadersToLines(b, 10000, 50)
+}
+func BenchmarkReadersToLines_100000_Same(b *testing.B) {
+	doBenchReadersToLines(b, 100000, 0)
+}
+func BenchmarkReadersToLines_100000_Similar(b *testing.B) {
+	doBenchReadersToLines(b, 100000, 3)
+}
+func BenchmarkReadersToLines_100000_Different(b *testing.B) {
+	doBenchReadersToLines(b, 100000, 50)
 }
 
 func shouldMatchLines(_a interface{}, _bs ...interface{}) string {

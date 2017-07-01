@@ -178,25 +178,9 @@ var readersToLinesBufferSize int = 100000
 
 func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 	var mu sync.RWMutex
-	m := make(map[string]uint64)
-	var count uint64 = 1
 	var finalErr error
 
-	// update finds the value that corresponds to s and appends that to v.  If v is not a value that
-	// has been seen before, a new value will be added into the mapping, m, and that value will be
-	// appended to v.
-	update := func(s string, v *[]uint64) {
-		mu.Lock()
-		n, ok := m[s]
-		if !ok {
-			m[s] = count
-			n = count
-			count++
-		}
-		mu.Unlock()
-		*v = append(*v, n)
-	}
-
+	ss := MakeStringSeq()
 	var wg sync.WaitGroup
 	readers := []io.Reader{fa, fb}
 	vs := make([][]uint64, 2)
@@ -213,7 +197,8 @@ func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 				if err != nil {
 					if err == io.EOF {
 						if len(cur) > 0 {
-							update(string(cur), v)
+							*v = append(*v, ss.ID(cur))
+							// update(string(cur), v)
 						}
 					} else {
 						mu.Lock()
@@ -235,7 +220,8 @@ func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 					} else {
 						cur = append(cur, tmp[prev:i]...)
 					}
-					update(string(cur), v)
+					*v = append(*v, ss.ID(cur))
+					// update(string(cur), v)
 					cur = nil
 					prev = i + 1
 				}
@@ -249,7 +235,7 @@ func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 		return nil, 0, finalErr
 	}
 
-	return vs, count, nil
+	return vs, ss.Max(), nil
 }
 
 func main() {
