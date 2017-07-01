@@ -1,18 +1,11 @@
 package jig
 
 import (
-	"flag"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"sync"
 	"time"
-)
-
-var (
-	filea = flag.String("a", "", "file a")
-	fileb = flag.String("b", "", "file b")
 )
 
 func stringToUint64s(s string) []uint64 {
@@ -174,7 +167,7 @@ func boolsAsInts(b []plusOrMinusType) string {
 	return v
 }
 
-var readersToLinesBufferSize int = 100000
+var readersToLinesBufferSize int = 10000
 
 func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 	var mu sync.RWMutex
@@ -198,7 +191,6 @@ func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 					if err == io.EOF {
 						if len(cur) > 0 {
 							*v = append(*v, ss.ID(cur))
-							// update(string(cur), v)
 						}
 					} else {
 						mu.Lock()
@@ -221,7 +213,6 @@ func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 						cur = append(cur, tmp[prev:i]...)
 					}
 					*v = append(*v, ss.ID(cur))
-					// update(string(cur), v)
 					cur = nil
 					prev = i + 1
 				}
@@ -236,111 +227,6 @@ func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 	}
 
 	return vs, ss.Max(), nil
-}
-
-func main() {
-	flag.Parse()
-	fa, err := os.Open(*filea)
-	if err != nil {
-		panic(err)
-	}
-	fb, err := os.Open(*fileb)
-	if err != nil {
-		panic(err)
-	}
-	start := time.Now()
-	v, max, err := ReadersToLines(fa, fb)
-	fa.Close()
-	fb.Close()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Time to read, split, and parse: %v\n", time.Since(start))
-	for _, lcsfunc := range []func(a, b []uint64) []commonSubstring{LCS2} {
-		fmt.Printf("---------------------------------------------\n")
-		start := time.Now()
-		// fmt.Printf("Time to convert: %v\n", time.Since(start))
-		mapping := make(map[uint64]uint64)
-		substrs := make(map[uint64]*substr)
-		for {
-			// fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
-			lscStart := time.Now()
-			css := lcsfunc(v[0], v[1])
-			fmt.Printf("LCS Time: %v\n", time.Since(lscStart))
-			if len(css) <= 0 {
-				break
-			}
-			// ai, bi, length :=
-			for _, cs := range css {
-				fmt.Printf("Pos(%d %d), Length %d\n", cs.ai, cs.bi, cs.length)
-				v[0][cs.ai] = max
-				v[1][cs.bi] = max + 1
-				substrs[max] = &substr{start: cs.ai, length: cs.length}
-				substrs[max+1] = &substr{start: cs.bi, length: cs.length}
-				mapping[max] = max + 1
-				max += 2
-
-				for i := cs.ai + 1; i+cs.length-1 < len(v[0]); i++ {
-					v[0][i] = v[0][i+cs.length-1]
-				}
-				v[0] = v[0][0 : len(v[0])-cs.length+1]
-				// for i := range v[0] {
-				// 	fmt.Printf("%d: %d\n", i, v[0][i])
-				// }
-
-				for i := cs.bi + 1; i+cs.length-1 < len(v[1]); i++ {
-					v[1][i] = v[1][i+cs.length-1]
-				}
-				v[1] = v[1][0 : len(v[1])-cs.length+1]
-			}
-		}
-		fmt.Printf("Finished after %v\n", time.Since(start))
-		// liness := [][]string{linesA, linesB}
-		for i := range v {
-			add := 0
-			for j := range v[i] {
-				if s, ok := substrs[v[i][j]]; ok {
-					s.start += add
-					add += s.length
-					// fmt.Printf("Lines %d %d: ", i, s.start)
-					// fmt.Printf("%s\n", liness[i][s.start])
-				} else {
-					add++
-				}
-			}
-		}
-		fmt.Printf("%v\n%v\n%v\n", v[0], v[1], mapping)
-		fmt.Printf("A:\n")
-		for _, v := range v[0] {
-			fmt.Printf("%d -> %v\n", v, substrs[v])
-		}
-		fmt.Printf("B:\n")
-		for _, v := range v[1] {
-			fmt.Printf("%d -> %v\n", v, substrs[v])
-		}
-		fmt.Printf("Finished more after %v\n", time.Since(start))
-	}
-}
-
-type substr struct {
-	start, length int
-}
-
-type runes []rune
-
-func (r runes) String() string {
-	var s string
-	for _, v := range r {
-		s += string(v) + " "
-	}
-	return "[" + s + "]"
-}
-func uint64sAsRunes(i []uint64) runes {
-	var s []rune
-	for _, v := range i {
-		s = append(s, rune(v))
-	}
-	return s
 }
 
 func DumbSuffixArray(v []uint64) []int {
