@@ -1,13 +1,205 @@
-package jig_test
+package jig
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"math"
 	"math/rand"
+	"strings"
 	"testing"
-
-	"github.com/runningwild/jig"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestReadersToLines(t *testing.T) {
+	inputs := [][2][]byte{
+		[2][]byte{makeLinearInput(100), makeLinearInput(150)},
+		[2][]byte{makeRandomInput(100, 0), makeRandomEdits(makeRandomInput(100, 0), 1, 0)},
+		[2][]byte{makeRandomInput(100, 1), makeRandomEdits(makeRandomInput(100, 1), 5, 0)},
+		[2][]byte{makeRandomInput(100, 2), makeRandomEdits(makeRandomInput(100, 2), 10, 0)},
+		[2][]byte{makeRandomInput(1000, 0), makeRandomEdits(makeRandomInput(1000, 0), 1, 0)},
+		[2][]byte{makeRandomInput(1000, 0), makeRandomEdits(makeRandomInput(1000, 0), 5, 0)},
+		[2][]byte{makeRandomInput(1000, 0), makeRandomEdits(makeRandomInput(1000, 0), 10, 0)},
+		[2][]byte{makeRandomInput(10000, 0), makeRandomEdits(makeRandomInput(10000, 0), 10, 0)},
+	}
+
+	Convey("ReadersToLines", t, func() {
+		Convey("can properly split several newlines in a row", func() {
+			input := []byte("a\n\n\nb\n\n\n")
+			lines, max, err := readersToLines(bytes.NewBuffer(input), bytes.NewBuffer(input))
+			So(err, ShouldBeNil)
+			So(max, ShouldEqual, 4)
+			So(lines, shouldMatchLines, [][]uint64{[]uint64{0, 1, 1, 2, 1, 1}, []uint64{0, 1, 1, 2, 1, 1}})
+		})
+		Convey("matches the simple reader", func() {
+			Convey("with a very small buffer size", func() {
+				for _, input := range inputs {
+					prevSize := readersToLinesBufferSize
+					defer func() {
+						readersToLinesBufferSize = prevSize
+					}()
+					for _, size := range []int{1, 2, 5, 10} {
+						readersToLinesBufferSize = size
+						lines, max, err := readersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+						So(err, ShouldBeNil)
+						wantLines, wantMax, _ := readersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+						So(max, ShouldEqual, wantMax)
+						So(lines, shouldMatchLines, wantLines)
+					}
+				}
+			})
+
+		})
+	})
+}
+
+func shouldMatchLines(_a interface{}, _bs ...interface{}) string {
+	a := _a.([][]uint64)
+	b := _bs[0].([][]uint64)
+
+	if len(a) != 2 || len(b) != 2 {
+		return "slices should have length 2"
+	}
+	if len(a[0]) != len(b[0]) {
+		return fmt.Sprintf("lengths of the first slices don't match (%d != %d)", len(a[0]), len(b[0]))
+	}
+	if len(a[1]) != len(b[1]) {
+		return fmt.Sprintf("lengths of the second slices don't match (%d != %d)", len(a[1]), len(b[1]))
+	}
+
+	// Canonicalize by rewriting them in the order they appear.
+	for _, v := range [][][]uint64{a, b} {
+		m := make(map[uint64]uint64)
+		for i := range v {
+			for j := range v[i] {
+				if _, ok := m[v[i][j]]; !ok {
+					m[v[i][j]] = uint64(len(m) + 1)
+				}
+			}
+		}
+		for i := range v {
+			for j := range v[i] {
+				v[i][j] = m[v[i][j]]
+			}
+		}
+	}
+
+	for i := range a {
+		for j := range a[i] {
+			if a[i][j] != b[i][j] {
+				return "slices don't have the same form"
+			}
+		}
+	}
+
+	return ""
+}
+
+func makeLinearInput(lines int) []byte {
+	var s string
+	for i := 0; i < lines; i++ {
+		s += fmt.Sprintf("%d\n", i)
+	}
+	return []byte(s)
+}
+
+func makeRandomInput(lines, seed int) []byte {
+	rng := rand.New(rand.NewSource(int64(seed)))
+	var s string
+	for i := 0; i < lines; i++ {
+		var line string
+		lineLength := rng.Intn(100)
+		for len(line) < lineLength {
+			line += fmt.Sprintf("%v ", rng.Intn(100000))
+		}
+		s += line + "\n"
+	}
+	return []byte(s)
+}
+
+func makeRandomEdits(input []byte, edits, seed int) []byte {
+	rng := rand.New(rand.NewSource(int64(seed)))
+	lines := strings.Split(string(input), "\n")
+	for i := 0; i < edits; i++ {
+		switch rng.Intn(3) {
+		case 0: // delete
+			if len(lines) == 0 {
+				break
+			}
+			start := rng.Intn(len(lines))
+			amt := 1 + rng.Intn(1+int(math.Sqrt(float64(len(lines)-start))))
+			lines, _ = removeLines(lines, start, amt)
+
+		case 1: // insert
+			insert := make([]string, 1+rng.Intn(1+int(math.Sqrt(float64(len(lines))))))
+			for i := range insert {
+				insert[i] = fmt.Sprintf("%d", rng.Intn(1000000))
+			}
+			lines = insertLines(lines, insert, rng.Intn(1+len(lines)))
+
+		case 2: // move
+			if len(lines) == 0 {
+				break
+			}
+			start := rng.Intn(len(lines))
+			amt := 1 + rng.Intn(1+int(math.Sqrt(float64(len(lines)-start))))
+			var removed []string
+			lines, removed = removeLines(lines, start, amt)
+			lines = insertLines(lines, removed, rng.Intn(1+len(lines)))
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func removeLines(lines []string, start, amt int) (edited, removed []string) {
+	if start+amt > len(lines) {
+		amt = len(lines) - start
+	}
+	removed = make([]string, amt)
+	copy(removed, lines[start:start+amt])
+	for i := start; i < len(lines)-amt; i++ {
+		lines[i] = lines[i+amt]
+	}
+	lines = lines[0 : len(lines)-amt]
+	return lines, removed
+}
+
+func insertLines(lines, insert []string, start int) (edited []string) {
+	for i := len(lines) - 1; i >= start+len(insert); i-- {
+		lines[i] = lines[i-len(insert)]
+	}
+	copy(lines[start:], insert)
+	return lines
+}
+
+func simpleReadersToLines(ra, rb io.Reader) ([][]uint64, uint64, error) {
+	a, err := ioutil.ReadAll(ra)
+	if err != nil {
+		return nil, 0, err
+	}
+	b, err := ioutil.ReadAll(rb)
+	if err != nil {
+		return nil, 0, err
+	}
+	linesA := strings.Split(string(a), "\n")
+	linesB := strings.Split(string(b), "\n")
+	var vs [][]uint64
+	m := make(map[string]uint64)
+	for _, lines := range [][]string{linesA, linesB} {
+		var v []uint64
+		for _, line := range lines {
+
+			if _, ok := m[line]; !ok {
+				m[line] = uint64(len(m) + 1)
+			}
+			v = append(v, m[line])
+		}
+		vs = append(vs, v)
+	}
+	return vs, uint64(len(m) + 1), nil
+}
 
 func TestSuffixArray(t *testing.T) {
 	Convey("Induced algorithm works", t, func() {
@@ -22,8 +214,8 @@ func TestSuffixArray(t *testing.T) {
 				{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
 			}
 			for _, test := range tests {
-				got := jig.InducedSuffixArray(test)
-				want := jig.DumbSuffixArray(test)
+				got := InducedSuffixArray(test)
+				want := DumbSuffixArray(test)
 				So(got, ShouldResemble, want)
 			}
 		})
@@ -36,8 +228,8 @@ func TestSuffixArray(t *testing.T) {
 				for i := range input {
 					input[i] = uint64(rng.Intn(alphabet))
 				}
-				got := jig.InducedSuffixArray(input)
-				want := jig.DumbSuffixArray(input)
+				got := InducedSuffixArray(input)
+				want := DumbSuffixArray(input)
 				So(got, ShouldResemble, want)
 			}
 		})
@@ -50,8 +242,8 @@ func TestSuffixArray(t *testing.T) {
 				for i := range input {
 					input[i] = uint64(rng.Intn(alphabet))
 				}
-				got := jig.InducedSuffixArray(input)
-				want := jig.DumbSuffixArray(input)
+				got := InducedSuffixArray(input)
+				want := DumbSuffixArray(input)
 				So(got, ShouldResemble, want)
 			}
 		})
@@ -67,7 +259,7 @@ func doBench(b *testing.B, length, alphabet int) {
 	}
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		jig.InducedSuffixArray(v)
+		InducedSuffixArray(v)
 	}
 }
 
@@ -99,7 +291,7 @@ func BenchmarkSA_1000000_1000(b *testing.B) {
 // func TestLCS(t *testing.T) {
 // 	Convey("LCS finds the longest common substring", t, func() {
 // 		Convey("at the start of one string and end of the other", func() {
-// 			ai, bi, length := jig.LCS(
+// 			ai, bi, length := LCS(
 // 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
 // 				toUint64s("012345678abcdefghijklmnopqrs"))
 // 			So(ai, ShouldEqual, 0)
@@ -107,7 +299,7 @@ func BenchmarkSA_1000000_1000(b *testing.B) {
 // 			So(length, ShouldEqual, 19)
 // 		})
 // 		Convey("at the end of one string and start of the other", func() {
-// 			ai, bi, length := jig.LCS(
+// 			ai, bi, length := LCS(
 // 				toUint64s("012345678abcdefghijklmnopqrs"),
 // 				toUint64s("abcdefghijklmnopqrstuvwxyz"))
 // 			So(ai, ShouldEqual, 9)
@@ -115,7 +307,7 @@ func BenchmarkSA_1000000_1000(b *testing.B) {
 // 			So(length, ShouldEqual, 19)
 // 		})
 // 		Convey("when the strings are equal", func() {
-// 			ai, bi, length := jig.LCS(
+// 			ai, bi, length := LCS(
 // 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
 // 				toUint64s("abcdefghijklmnopqrstuvwxyz"))
 // 			So(ai, ShouldEqual, 0)
@@ -123,7 +315,7 @@ func BenchmarkSA_1000000_1000(b *testing.B) {
 // 			So(length, ShouldEqual, 26)
 // 		})
 // 		Convey("when the strings have no common values", func() {
-// 			_, _, length := jig.LCS(
+// 			_, _, length := LCS(
 // 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
 // 				toUint64s("0123456789"))
 // 			So(length, ShouldEqual, 0)
@@ -147,7 +339,7 @@ func BenchmarkSA_1000000_1000(b *testing.B) {
 // 	}
 // 	b.StartTimer()
 // 	for i := 0; i < b.N; i++ {
-// 		jig.LCS(ab[0:lenA], ab[overlap:])
+// 		LCS(ab[0:lenA], ab[overlap:])
 // 	}
 // }
 

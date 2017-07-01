@@ -1,11 +1,12 @@
-package main
+package jig
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"os"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -173,25 +174,108 @@ func boolsAsInts(b []plusOrMinusType) string {
 	return v
 }
 
+var readersToLinesBufferSize int = 100000
+
+func readersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
+	var mu sync.RWMutex
+	m := make(map[string]uint64)
+	var count uint64 = 1
+	var finalErr error
+
+	// update finds the value that corresponds to s and appends that to v.  If v is not a value that
+	// has been seen before, a new value will be added into the mapping, m, and that value will be
+	// appended to v.
+	update := func(s string, v *[]uint64) {
+		mu.Lock()
+		n, ok := m[s]
+		if !ok {
+			m[s] = count
+			n = count
+			count++
+		}
+		mu.Unlock()
+		*v = append(*v, n)
+	}
+
+	var wg sync.WaitGroup
+	readers := []io.Reader{fa, fb}
+	vs := make([][]uint64, 2)
+	for i := range readers {
+		wg.Add(1)
+		// Launch one go-routine per reader.  The go-routine will read lines from the reader,
+		// convert those into uint64s, then append those values onto *v.
+		go func(f io.Reader, v *[]uint64) {
+			defer wg.Done()
+			buf := make([]byte, readersToLinesBufferSize)
+			var cur []byte
+			for {
+				amt, err := f.Read(buf)
+				if err != nil {
+					if err == io.EOF {
+						if len(cur) > 0 {
+							update(string(cur), v)
+						}
+					} else {
+						mu.Lock()
+						if finalErr != nil {
+							finalErr = err
+						}
+						mu.Unlock()
+					}
+					return
+				}
+				tmp := buf[0:amt]
+				prev := 0
+				for i := range tmp {
+					if tmp[i] != '\n' {
+						continue
+					}
+					if cur == nil {
+						cur = tmp[prev:i]
+					} else {
+						cur = append(cur, tmp[prev:i]...)
+					}
+					update(string(cur), v)
+					cur = nil
+					prev = i + 1
+				}
+				cur = append(cur, tmp[prev:]...)
+			}
+		}(readers[i], &vs[i])
+	}
+	wg.Wait()
+
+	if finalErr != nil {
+		return nil, 0, finalErr
+	}
+
+	return vs, count, nil
+}
+
 func main() {
 	flag.Parse()
-	dataA, err := ioutil.ReadFile(*filea)
+	fa, err := os.Open(*filea)
 	if err != nil {
 		panic(err)
 	}
-	dataB, err := ioutil.ReadFile(*fileb)
+	fb, err := os.Open(*fileb)
 	if err != nil {
 		panic(err)
 	}
+	start := time.Now()
+	v, max, err := readersToLines(fa, fb)
+	fa.Close()
+	fb.Close()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Time to read, split, and parse: %v\n", time.Since(start))
 	for _, lcsfunc := range []func(a, b []uint64) []commonSubstring{LCS2} {
 		fmt.Printf("---------------------------------------------\n")
-		linesA := bytes.Split(dataA, []byte("\n"))
-		linesB := bytes.Split(dataB, []byte("\n"))
-		v, max := bytesToUint64s([][][]byte{linesA, linesB})
+		start := time.Now()
 		// fmt.Printf("Time to convert: %v\n", time.Since(start))
 		mapping := make(map[uint64]uint64)
 		substrs := make(map[uint64]*substr)
-		start := time.Now()
 		for {
 			// fmt.Printf("lengths: %d %d\n", len(v[0]), len(v[1]))
 			lscStart := time.Now()
@@ -250,24 +334,6 @@ func main() {
 		}
 		fmt.Printf("Finished more after %v\n", time.Since(start))
 	}
-}
-func bytesToUint64s(v [][][]byte) ([][]uint64, uint64) {
-	var ret [][]uint64
-	var count uint64
-	unique := make(map[string]uint64)
-	for i := range v {
-		var cur []uint64
-		for _, b := range v[i] {
-			s := string(b)
-			if _, ok := unique[s]; !ok {
-				unique[s] = count
-				count++
-			}
-			cur = append(cur, unique[s])
-		}
-		ret = append(ret, cur)
-	}
-	return ret, count
 }
 
 type substr struct {
@@ -373,6 +439,7 @@ func LCS2(a, b []uint64) []commonSubstring {
 	// for _, p := range pairs {
 	// 	fmt.Printf("%v\n", p)
 	// }
+	var css []commonSubstring
 	var cs commonSubstring
 	for i := range pairs {
 		if pairs[i][2] > 0 {
@@ -380,7 +447,6 @@ func LCS2(a, b []uint64) []commonSubstring {
 		}
 		prev := i
 		for {
-			// fmt.Printf("Seeking for %v + 1\n", pairs[prev])
 			// We know the value we are looking for is after prev, so restrict our search to that.
 			tp := pairs[prev:]
 			dex := sort.Search(len(tp), func(idx int) bool {
@@ -394,7 +460,6 @@ func LCS2(a, b []uint64) []commonSubstring {
 			if pairs[dex][0] != pairs[prev][0]+1 || pairs[dex][1] != pairs[prev][1]+1 {
 				break
 			}
-			// fmt.Printf("dex(%d): %v\n", dex, pairs[dex])
 			pairs[dex][2] = 1
 			prev = dex
 		}
@@ -407,8 +472,9 @@ func LCS2(a, b []uint64) []commonSubstring {
 			// fmt.Printf("Setting LCS: %v %v %v\n", ai, bi, length)
 		}
 	}
+	css = append(css, cs)
 
-	return []commonSubstring{cs}
+	return css
 }
 
 func LCS(a, b []uint64) (ai, bi, length int) {
