@@ -249,11 +249,11 @@ func DumbSuffixArray(v []uint64) []int {
 // LCS finds the Longest Common Substring between two 'strings' of uint64.  ai and bi are the start
 // of the substring in each of the input arrays, and length is the length of the common substring.
 // If there is no common substring, ai and bi will be -1 and length will be 0.
-type commonSubstring struct {
-	ai, bi, length int
+type CommonSubstring struct {
+	Ai, Bi, Length int
 }
 
-func LCS2(a, b []uint64) []commonSubstring {
+func LCS2(a, b []uint64) []CommonSubstring {
 	var input []uint64
 	var max uint64
 	for _, v := range a {
@@ -311,41 +311,61 @@ func LCS2(a, b []uint64) []commonSubstring {
 	// for _, p := range pairs {
 	// 	fmt.Printf("%v\n", p)
 	// }
-	var css []commonSubstring
-	var cs commonSubstring
-	for i := range pairs {
-		if pairs[i][2] > 0 {
-			continue
-		}
-		prev := i
-		for {
-			// We know the value we are looking for is after prev, so restrict our search to that.
-			tp := pairs[prev:]
-			dex := sort.Search(len(tp), func(idx int) bool {
-				return tp[idx][0] > pairs[prev][0]+1 ||
-					(tp[idx][0] == pairs[prev][0]+1 && tp[idx][1] >= pairs[prev][1]+1)
-			})
-			dex += prev
-			if dex >= len(pairs) {
-				break
+	var css []CommonSubstring
+	for {
+		var cs CommonSubstring
+		for i := range pairs {
+			if pairs[i][2] > 0 {
+				continue
 			}
-			if pairs[dex][0] != pairs[prev][0]+1 || pairs[dex][1] != pairs[prev][1]+1 {
-				break
+			prev := i
+			for {
+				// We know the value we are looking for is after prev, so restrict our search to that.
+				tp := pairs[prev:]
+				dex := sort.Search(len(tp), func(idx int) bool {
+					return tp[idx][0] > pairs[prev][0]+1 ||
+						(tp[idx][0] == pairs[prev][0]+1 && tp[idx][1] >= pairs[prev][1]+1)
+				})
+				dex += prev
+				if dex >= len(pairs) {
+					break
+				}
+				if pairs[dex][0] != pairs[prev][0]+1 || pairs[dex][1] != pairs[prev][1]+1 {
+					break
+				}
+				pairs[dex][2] = 1
+				prev = dex
 			}
-			pairs[dex][2] = 1
-			prev = dex
-		}
-		if pairs[prev][0]-pairs[i][0]+1 > cs.length {
-			cs = commonSubstring{
-				length: pairs[prev][0] - pairs[i][0] + 1,
-				ai:     pairs[i][0],
-				bi:     pairs[i][1],
+			if pairs[prev][0]-pairs[i][0]+1 > cs.Length {
+				cs = CommonSubstring{
+					Ai:     pairs[i][0],
+					Bi:     pairs[i][1],
+					Length: pairs[prev][0] - pairs[i][0] + 1,
+				}
 			}
-			// fmt.Printf("Setting LCS: %v %v %v\n", ai, bi, length)
 		}
+		fmt.Printf("Got Common Substring: %v\n", cs)
+		if cs.Length == 0 {
+			break
+		}
+		count := 0
+		for i := 0; i < len(pairs); i++ {
+			pairs[count] = pairs[i]
+			pairs[count][2] = 0
+			if (pairs[i][0] >= cs.Ai && pairs[i][0] < cs.Ai+cs.Length) ||
+				(pairs[i][1] >= cs.Bi && pairs[i][1] < cs.Bi+cs.Length) {
+			} else {
+				count++
+			}
+		}
+		fmt.Printf("%d down to %d/%d\n", len(pairs), count, cs.Length)
+		if len(pairs) == 1 {
+			fmt.Printf("%v\n", pairs)
+		}
+		pairs = pairs[0:count]
+		css = append(css, cs)
 	}
-	css = append(css, cs)
-
+	fmt.Printf("Got %d runs with %d pairs remaining\n", len(css), len(pairs))
 	return css
 }
 
