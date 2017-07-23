@@ -35,51 +35,60 @@ func TestSplitNode(t *testing.T) {
 			Form:    graph.FormText,
 			Content: contentHash,
 			Count:   7,
-			In:      []graph.Edge{{Commit: "commit-0", Node: "node-x", Primary: true}},
+			In:      []graph.Edge{{Commit: "commit-0", Node: "path:sample.txt", Primary: true}},
+			Out:     []graph.Edge{{Commit: "commit-0", Node: "1"}},
 		})
-		//Convey("can split a node where dist < n.Count", func() {
-		//	a, b, err := graph.SplitNode(r, n, 3)
-		//	So(err, ShouldBeNil)
-		//	So(a, ShouldNotEqual, "")
-		//	So(b, ShouldNotEqual, "")
-		//	nodeA := r.GetNode(a)
-		//	So(nodeA, ShouldNotBeNil)
-		//	So(nodeA.Out[0].Node, ShouldEqual, b)
-		//	nodeB := r.GetNode(b)
-		//	So(nodeB, ShouldNotBeNil)
-		//	So(nodeB.In[0].Node, ShouldEqual, a)
-		//	So(r.GetNode(n), ShouldNotBeNil)
-		//	// NEXT: Need to keep around the first node in a split, that can always be referred to later.
-		//	So(r.GetContent(nodeA.Content), ShouldResemble, []byte("foo\nbar\nwing"))
-		//	So(r.GetContent(nodeB.Content), ShouldResemble, []byte("\nding\nmonkey\nball\n"))
-		//	Convey("and and where dist > n.Count", func() {
-		//		c, d, err := graph.SplitNode(r, n, 5)
-		//		So(err, ShouldBeNil)
-		//		So(c, ShouldNotEqual, "")
-		//		So(d, ShouldNotEqual, "")
-		//		nodeC := r.GetNode(c)
-		//		So(nodeC, ShouldNotBeNil)
-		//		So(nodeC.Out[0].Node, ShouldEqual, d)
-		//		nodeD := r.GetNode(d)
-		//		So(nodeD, ShouldNotBeNil)
-		//		So(nodeD.In[0].Node, ShouldEqual, c)
-		//		So(r.GetNode(n), ShouldBeNil)
-		//		So(r.GetContent(nodeA.Content), ShouldResemble, []byte("foo\nbar\nwing\nding\nmonkey"))
-		//		So(r.GetContent(nodeB.Content), ShouldResemble, []byte("\nball\n"))
-		//	})
-		//})
-		//Convey("doesn't split if the split point is at the end of an existing node", func() {
-		//	a, b, err := graph.SplitNode(r, n, 7)
-		//	So(err, ShouldBeNil)
-		//	So(a, ShouldEqual, n)
-		//	So(b, ShouldEqual, "")
-		//})
+		Convey("can split a node where dist < n.Count", func() {
+			tail0, head1, err := graph.SplitNode(r, head, 3)
+			So(err, ShouldBeNil)
+			So(tail0, ShouldNotEqual, "")
+			So(head1, ShouldNotEqual, "")
+			node0 := r.GetNode(head)
+			So(node0, ShouldNotBeNil)
+			So(node0.Head, ShouldEqual, head)
+			So(node0.Tail, ShouldEqual, tail0)
+			So(node0.Out[0].Node, ShouldEqual, head1)
+			node1 := r.GetNode(head1)
+			So(node1, ShouldNotBeNil)
+			So(node1.In[0].Node, ShouldEqual, tail0)
+			So(node0.Count, ShouldEqual, 3)
+			So(node1.Count, ShouldEqual, 4)
+			So(string(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
+			So(string(r.GetContent(node1.Content)), ShouldEqual, "\nding\nmonkey\nball\n")
+			Convey("and and where dist > n.Count", func() {
+				tail1, head2, err := graph.SplitNode(r, head, 5)
+				So(err, ShouldBeNil)
+				So(tail1, ShouldNotEqual, "")
+				So(head2, ShouldNotEqual, "")
+				node1 := r.GetNode(head1)
+				So(node1, ShouldNotBeNil)
+				So(node1.Out[0].Node, ShouldEqual, head2)
+				node2 := r.GetNode(head2)
+				So(node2, ShouldNotBeNil)
+				So(r.GetRef(node2.In[0].Node), ShouldEqual, head1)
+				So(node0.Count, ShouldEqual, 3)
+				So(node1.Count, ShouldEqual, 2)
+				So(node2.Count, ShouldEqual, 2)
+				So(string(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
+				So(string(r.GetContent(node1.Content)), ShouldEqual, "\nding\nmonkey")
+				So(string(r.GetContent(node2.Content)), ShouldEqual, "\nball\n")
+			})
+		})
+		Convey("doesn't split if the split point is at the end of an existing node", func() {
+			before := len(r.nodes)
+			a, b, err := graph.SplitNode(r, head, 7)
+			So(err, ShouldBeNil)
+			So(a, ShouldEqual, tail)
+			So(b, ShouldEqual, "1")
+			So(len(r.nodes), ShouldEqual, before)
+		})
 	})
 }
 
 type testRepo struct {
 	nodes        map[string]*graph.Node
 	content      map[string][]byte
+	refs         map[string]string
 	transactions int
 }
 
@@ -87,9 +96,13 @@ func makeFakeRepo() *testRepo {
 	return &testRepo{
 		nodes:   make(map[string]*graph.Node),
 		content: make(map[string][]byte),
+		refs:    make(map[string]string),
 	}
 }
 
+func (r *testRepo) GetRef(ptr string) string {
+	return r.refs[ptr]
+}
 func (r *testRepo) GetNode(nodeHash string) *graph.Node {
 	return r.nodes[nodeHash]
 }
@@ -108,6 +121,9 @@ func (r *testRepo) EndTransaction() error {
 	}
 	r.transactions = 0
 	return nil
+}
+func (r *testRepo) PutRef(ptr, val string) {
+	r.refs[ptr] = val
 }
 func (r *testRepo) PutNode(n *graph.Node) {
 	r.nodes[n.Head] = n

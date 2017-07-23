@@ -24,11 +24,13 @@ type SimpleRepo struct {
 }
 
 type Repo interface {
+	GetRef(ptr string) string
 	GetNode(nodeHash string) *Node
 	GetContent(contentHash string) []byte
 
 	StartTransaction()
 	EndTransaction() error
+	PutRef(ptr, val string)
 	PutNode(n *Node)
 	DeleteNode(nodeHash string)
 
@@ -74,27 +76,24 @@ type Repo interface {
 //       distance along the way.  When applying that commit you can go to the edge and walk forward, only using that
 //       edge's commit's edges.
 //
-func SplitNode(r Repo, node string, dist int) (aHash, bHash string, err error) {
+
+// SplitNode takes a node and a dist and replaces that node with two nodes, split at the specified
+// dist.  The first of those nodes will have the same Head hash, and the second will have the same
+// Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
+func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 	if dist <= 0 {
 		return "", "", fmt.Errorf("cannot split a node at dist < 0")
 	}
-	n := r.GetNode(node)
-	if n == nil {
-		return "", "", fmt.Errorf("node not found")
+
+	var n *Node
+	for n=r.GetNode(node); dist > n.Count && len(n.Out) > 0; n=r.GetNode(n.Out[0].Node) {
+			dist -= n.Count
+	}
+	fmt.Printf("%v %v\n", n, dist)
+	if n == nil || dist > n.Count {
+		return "","",fmt.Errorf("dist is beyond original node's length")
 	}
 	commitHash := n.In[0].Commit
-	for dist > n.Count {
-		dist -= n.Count
-		n = r.GetNode(n.Out[0].Node)
-
-		if n == nil {
-			return "", "", fmt.Errorf("node not found")
-		}
-		if n.Out[0].Commit != commitHash {
-			return "", "", fmt.Errorf("dist is beyond original node's length")
-		}
-		// TODO: Guard against bad stuff
-	}
 
 	// Split the content
 	// TODO: This needs to work for other formats
@@ -106,8 +105,10 @@ func SplitNode(r Repo, node string, dist int) (aHash, bHash string, err error) {
 		return "", "", fmt.Errorf("node content not found")
 	}
 	var offset, count int
-	for offset = 0; offset < len(content); offset++ {
-		fmt.Printf("Checking cahracter %q\n", content[offset])
+	if len(content) > 0 && content[0] == '\n' {
+		offset++
+	}
+	for ; offset < len(content); offset++ {
 		if content[offset] == '\n' {
 			count++
 			if count == dist {
@@ -124,7 +125,16 @@ func SplitNode(r Repo, node string, dist int) (aHash, bHash string, err error) {
 	}
 	if offset == len(content) {
 		// No splitting necessary
-		return node, "", nil
+		return n.Tail, n.Out[0].Node, nil
+	}
+
+	head0, tail0 := CalculateNodeHashes(commitHash, n.In[0].Node, n.Form, content[0:offset])
+	head1, tail1 := CalculateNodeHashes(commitHash, tail0, n.Form, content[offset:])
+	if head0 != n.Head {
+		return "", "", fmt.Errorf("failed to calculate node head hashes properly")
+	}
+	if tail1 != n.Tail {
+		return "", "", fmt.Errorf("failed to calculate node tail hashes properly")
 	}
 
 	r.StartTransaction()
@@ -139,35 +149,37 @@ func SplitNode(r Repo, node string, dist int) (aHash, bHash string, err error) {
 	contentB := r.PutContent(content[offset:])
 
 	a := &Node{
+		Head:    head0,
+		Tail:    tail0,
 		Form:    n.Form,
 		Content: contentA,
 		Count:   dist,
 		In:      n.In,
-		//Out:     []Edge{{Commit: commitHash, Node: nodeHash(b)}},
-		//OutDeps: nil,
+		Out:     []Edge{{Commit: commitHash, Node: head1}},
+		OutDeps: nil,
 	}
 	b := &Node{
+		Head:    head1,
+		Tail:    tail1,
 		Form:    n.Form,
 		Content: contentB,
 		Count:   n.Count - dist,
-		//In:      []Edge{{Commit: commitHash, Node: nodeHash(a)}},
+		In:      []Edge{{Commit: commitHash, Node: tail0}},
 		Out:     n.Out,
 		OutDeps: n.OutDeps,
 	}
-	// Must write b first, because only a's hash is set in stone at this point.
-	b.In = []Edge{{Commit: commitHash, Node: ""}}
-	a.Out = []Edge{{Commit: commitHash, Node: ""}}
-	a.OutDeps = nil
 
-	r.PutNode(a)
+	fmt.Printf("Split: \n\t(%s, %s)\n\t(%s, %s)\n", head0, tail0, head1, tail1)
+
+	r.PutNode(a) // This overwrite the previous node
 	r.PutNode(b)
-	r.DeleteNode("")
 
-	return ",", ",", nil
-}
+	// Update refs.  This will also update anything that pointed to the tail of the original node to
+	// end up on the second node rather than the first.
+	r.PutRef(tail1, head1)
+	r.PutRef(tail0, head0)
 
-func nodeHash(n *Node) string {
-	return "node + " + n.Content
+	return tail0, head1, nil
 }
 
 func (s *SimpleRepo) Apply(c *Commit) error {
