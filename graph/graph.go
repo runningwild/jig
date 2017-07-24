@@ -1,12 +1,15 @@
+// NEXT: Apply the commits, starting with ApplyEdge, probably.  Also NodeRefs should specify a Node now, not an Edge.
+
 package graph
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 
 	skein512 "github.com/runningwild/skein/hash/512"
+	"os"
+	"strings"
 )
 
 type SimpleRepo struct {
@@ -86,12 +89,12 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 	}
 
 	var n *Node
-	for n=r.GetNode(node); dist > n.Count && len(n.Out) > 0; n=r.GetNode(n.Out[0].Node) {
-			dist -= n.Count
+	for n = r.GetNode(node); dist > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
+		dist -= n.Count
 	}
 	fmt.Printf("%v %v\n", n, dist)
 	if n == nil || dist > n.Count {
-		return "","",fmt.Errorf("dist is beyond original node's length")
+		return "", "", fmt.Errorf("dist is beyond original node's length")
 	}
 	commitHash := n.In[0].Commit
 
@@ -169,8 +172,6 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 		OutDeps: n.OutDeps,
 	}
 
-	fmt.Printf("Split: \n\t(%s, %s)\n\t(%s, %s)\n", head0, tail0, head1, tail1)
-
 	r.PutNode(a) // This overwrite the previous node
 	r.PutNode(b)
 
@@ -242,70 +243,72 @@ func (s *SimpleRepo) Apply(c *Commit) error {
 	return nil
 }
 
-func (s *SimpleRepo) PrintFile(path string, frontier map[string]bool, w io.Writer) error {
-	fn, ok := s.Files[path]
-	if !ok {
+func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
+	n := r.GetNode("file:" + path)
+	if n == nil {
 		return fmt.Errorf("file not found")
 	}
-	// Just taking the first one, in practice we need to take what's in the frontier, and order them
-	// topologically.
-	e := fn.Out[0]
-	if e.Node == "0" {
+
+	if n.Out[len(n.Out)-1].Node == "0" {
 		return fmt.Errorf("file was deleted")
 	}
-	for e.Node != "1" {
-		n := s.Nodes[e.Node]
-		if _, err := w.Write(s.Content[n.Content]); err != nil {
+
+	for n.Out[len(n.Out)-1].Node != "1" {
+		n = r.GetNode(n.Out[len(n.Out)-1].Node)
+		if _, err := w.Write(r.GetContent(n.Content)); err != nil {
 			return err
 		}
-		e = n.Out[0]
 	}
 	return nil
 }
 
-func main() {
-	s := SimpleRepo{
-		Files:   make(map[string]*FileNode),
-		Nodes:   make(map[string]*Node),
-		Content: make(map[string][]byte),
-		Deps:    make(map[string][]string),
+func Main() {
+	r := makeFakeRepo()
+	content := []byte(strings.Join([]string{"apple", "banana", "car", "dummy", "echo", "fudge", "gobble", "hug", "ike", ""}, "\n"))
+	contentHash := r.PutContent(content)
+	head, tail := CalculateNodeHashes("commit-0", "file:foo.txt", FormText, content)
+	r.PutNode(&Node{
+		Head:    head,
+		Tail:    tail,
+		Form:    FormText,
+		Content: contentHash,
+		Count:   10,
+		In:      []Edge{{Commit: "commit-0", Node: "file:foo.txt", Primary: true}},
+		Out:     []Edge{{Commit: "commit-0", Node: "1", Primary: true}},
+		OutDeps: [][]int{{}},
+	})
+	r.PutNode(&Node{
+		Head:    "file:foo.txt",
+		Tail:    "",
+		Form:    FormFile,
+		Out:     []Edge{{Commit: "commit-0", Node: head, Primary: true}},
+		OutDeps: [][]int{{}},
+	})
+	midTail, midHead, err := SplitNode(r, head, 3)
+	if err != nil {
+		panic(err)
 	}
-	c0 := &Commit{
-		Deps: nil,
-		EdgeRefs: []EdgeRef{
-			{Src: 0, Dst: -1},
-			{Src: 1, Dst: -1},
-		},
-		NodeRefs: nil,
-		Contents: []NewContent{
-			{
-				Path:    "foo.txt",
-				Content: []byte("foo\nbar\nwing\nding\n"),
-			},
-			{
-				Path:    "beans.txt",
-				Content: []byte("beans\nbeans\nbeans\nbeans\nbeans\n"),
-			},
-		},
-	}
-	s.Apply(c0)
-	c1 := &Commit{
-		Deps: []string{c0.Hash()},
-		EdgeRefs: []EdgeRef{
-			{Src: 0, Dst: 1},
-		},
-		NodeRefs: []NodeRef{
-			{Edge: "foo.txt", Depth: 1},
-			{Edge: "foo.txt", Depth: 3},
-		},
-		Contents: nil,
-	}
-	s.Apply(c1)
-	for path := range s.Files {
-		buf := bytes.NewBuffer(nil)
-		s.PrintFile(path, nil, buf)
-		fmt.Printf("%s:\n%s--------------------\n", path, buf.Bytes())
-	}
+	content2 := []byte(strings.Join([]string{"", "BEANS", "MONKEYS", "BOOO!!!"}, "\n"))
+	content2Hash := r.PutContent(content2)
+	head2, tail2 := CalculateNodeHashes("commit-2", midTail, FormText, content2)
+	r.PutNode(&Node{
+		Head:    head2,
+		Tail:    tail2,
+		Form:    FormText,
+		Content: content2Hash,
+		Count:   4,
+		In:      []Edge{{Commit: "commit-2", Node: midTail, Primary: true}},
+		Out:     []Edge{{Commit: "commit-2", Node: midHead, Primary: true}},
+		OutDeps: [][]int{{}},
+	})
+	n := r.GetNode(r.GetRef(midTail))
+	n.Out = append(n.Out, Edge{Commit: "commit-2", Node: head2, Primary: true})
+	n.OutDeps = append(n.OutDeps, []int{0})
+	r.PutNode(n)
+	n = r.GetNode(midHead)
+	n.In = append(n.In, Edge{Commit: "commit-2", Node: tail2, Primary: true})
+	r.PutNode(n)
+	PrintFile(r, "foo.txt", nil, os.Stdout)
 }
 
 type EdgeRef struct {
@@ -472,6 +475,66 @@ const (
 	// have a zero-length line at the end.
 	FormText = iota
 
+	// Used for the first node in a file only.
+	FormFile
+
 	// FormBinary is a binary file.  TODO: Need to define the chunking algorithm
 //	FormBinary
 )
+
+////// omgggggg
+
+type testRepo struct {
+	nodes        map[string]*Node
+	content      map[string][]byte
+	refs         map[string]string
+	transactions int
+}
+
+func makeFakeRepo() *testRepo {
+	return &testRepo{
+		nodes:   make(map[string]*Node),
+		content: make(map[string][]byte),
+		refs:    make(map[string]string),
+	}
+}
+
+func (r *testRepo) GetRef(ptr string) string {
+	return r.refs[ptr]
+}
+func (r *testRepo) GetNode(nodeHash string) *Node {
+	return r.nodes[nodeHash]
+}
+func (r *testRepo) GetContent(contentHash string) []byte {
+	return r.content[contentHash]
+}
+func (r *testRepo) StartTransaction() {
+	if r.transactions != 0 {
+		panic("omg")
+	}
+	r.transactions = 1
+}
+func (r *testRepo) EndTransaction() error {
+	if r.transactions != 1 {
+		panic("zomg")
+	}
+	r.transactions = 0
+	return nil
+}
+func (r *testRepo) PutRef(ptr, val string) {
+	r.refs[ptr] = val
+}
+func (r *testRepo) PutNode(n *Node) {
+	r.nodes[n.Head] = n
+}
+func (r *testRepo) DeleteNode(nodeHash string) {
+	delete(r.nodes, nodeHash)
+}
+func (r *testRepo) PutContent(content []byte) string {
+	hash := fmt.Sprintf("%x", skein512.Hash512(128, content))
+	r.content[hash] = content
+	return hash
+}
+func (r *testRepo) DeleteContent(contentHash string) {
+	delete(r.content, contentHash)
+}
