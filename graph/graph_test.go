@@ -1,19 +1,33 @@
 package graph_test
 
 import (
+	"bytes"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 
 	"fmt"
+
 	"github.com/runningwild/jig/graph"
 	skein512 "github.com/runningwild/skein/hash/512"
 )
 
+func stringsToContent(ss ...string) [][]byte {
+	var lines [][]byte
+	for _, s := range ss {
+		lines = append(lines, []byte(s))
+	}
+	return lines
+}
+
+func contentToString(content [][]byte) string {
+	return string(bytes.Join(content, []byte{'\n'}))
+}
+
 func TestNodeHashes(t *testing.T) {
 	Convey("CalculateNodeHashes", t, func() {
-		c0 := []byte("foo\nbar\nwing")
-		c1 := []byte("\nding\nmonkey\nball\n")
+		c0 := stringsToContent("foo", "bar", "wing")
+		c1 := stringsToContent("ding", "monkey", "ball")
 		head, tail := graph.CalculateNodeHashes("commit", "prev", graph.FormText, append(c0, c1...))
 		So(head, ShouldNotEqual, tail)
 		head2, middle := graph.CalculateNodeHashes("commit", "prev", graph.FormText, c0)
@@ -26,7 +40,7 @@ func TestNodeHashes(t *testing.T) {
 func TestSplitNode(t *testing.T) {
 	Convey("SplitNode", t, func() {
 		r := makeFakeRepo()
-		sampleContent := []byte("foo\nbar\nwing\nding\nmonkey\nball\n")
+		sampleContent := stringsToContent("foo", "bar", "wing", "ding", "monkey", "ball", "")
 		contentHash := r.PutContent(sampleContent)
 		head, tail := graph.CalculateNodeHashes("commit-0", "path:sample.txt", graph.FormText, sampleContent)
 		r.PutNode(&graph.Node{
@@ -53,8 +67,8 @@ func TestSplitNode(t *testing.T) {
 			So(node1.In[0].Node, ShouldEqual, tail0)
 			So(node0.Count, ShouldEqual, 3)
 			So(node1.Count, ShouldEqual, 4)
-			So(string(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
-			So(string(r.GetContent(node1.Content)), ShouldEqual, "\nding\nmonkey\nball\n")
+			So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
+			So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "ding\nmonkey\nball\n")
 			Convey("and and where dist > n.Count", func() {
 				tail1, head2, err := graph.SplitNode(r, head, 5)
 				So(err, ShouldBeNil)
@@ -69,9 +83,9 @@ func TestSplitNode(t *testing.T) {
 				So(node0.Count, ShouldEqual, 3)
 				So(node1.Count, ShouldEqual, 2)
 				So(node2.Count, ShouldEqual, 2)
-				So(string(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
-				So(string(r.GetContent(node1.Content)), ShouldEqual, "\nding\nmonkey")
-				So(string(r.GetContent(node2.Content)), ShouldEqual, "\nball\n")
+				So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
+				So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "ding\nmonkey")
+				So(contentToString(r.GetContent(node2.Content)), ShouldEqual, "ball\n")
 			})
 		})
 		Convey("doesn't split if the split point is at the end of an existing node", func() {
@@ -87,16 +101,18 @@ func TestSplitNode(t *testing.T) {
 
 type testRepo struct {
 	nodes        map[string]*graph.Node
-	content      map[string][]byte
+	content      map[string][][]byte
 	refs         map[string]string
+	commits      map[string]*graph.Commit
 	transactions int
 }
 
 func makeFakeRepo() *testRepo {
 	return &testRepo{
 		nodes:   make(map[string]*graph.Node),
-		content: make(map[string][]byte),
+		content: make(map[string][][]byte),
 		refs:    make(map[string]string),
+		commits: make(map[string]*graph.Commit),
 	}
 }
 
@@ -106,7 +122,10 @@ func (r *testRepo) GetRef(ptr string) string {
 func (r *testRepo) GetNode(nodeHash string) *graph.Node {
 	return r.nodes[nodeHash]
 }
-func (r *testRepo) GetContent(contentHash string) []byte {
+func (r *testRepo) GetCommit(commitHash string) *graph.Commit {
+	return r.commits[commitHash]
+}
+func (r *testRepo) GetContent(contentHash string) [][]byte {
 	return r.content[contentHash]
 }
 func (r *testRepo) StartTransaction() {
@@ -128,13 +147,25 @@ func (r *testRepo) PutRef(ptr, val string) {
 func (r *testRepo) PutNode(n *graph.Node) {
 	r.nodes[n.Head] = n
 }
+func (r *testRepo) PutCommit(c *graph.Commit) {
+	r.commits[c.Hash()] = c
+}
 func (r *testRepo) DeleteNode(nodeHash string) {
 	delete(r.nodes, nodeHash)
 }
-func (r *testRepo) PutContent(content []byte) string {
-	hash := fmt.Sprintf("%x", skein512.Hash512(128, content))
+func (r *testRepo) PutContent(content [][]byte) string {
+	hash := hashContent(content)
 	r.content[hash] = content
 	return hash
+}
+func hashContent(content [][]byte) string {
+	h := skein512.NewHash512(128)
+	for _, line := range content {
+		length := uint32(len(line))
+		h.Write([]byte{byte(length), byte(length >> 8), byte(length >> 16), byte(length >> 24)})
+		h.Write(line)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 func (r *testRepo) DeleteContent(contentHash string) {
 	delete(r.content, contentHash)

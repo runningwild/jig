@@ -1,8 +1,7 @@
-// NEXT: Text format should not include newlines, they should be added when nodes are traversed, it
-// would have to be done anyway to deal with different newlines on different OSes.
 package graph
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -13,24 +12,10 @@ import (
 	skein512 "github.com/runningwild/skein/hash/512"
 )
 
-type SimpleRepo struct {
-	// Map from fmt.Sprintf("path:%s", path) to FileNode
-	Files map[string]*FileNode
-
-	// Map from Node hash to Node
-	Nodes map[string]*Node
-
-	// Map from Content hash to Content
-	Content map[string][]byte
-
-	// Map from Commit hash to list of Commits hashes that Commit depends on
-	Deps map[string][]string
-}
-
 type Repo interface {
 	GetRef(ptr string) string
 	GetNode(nodeHash string) *Node
-	GetContent(contentHash string) []byte
+	GetContent(contentHash string) [][]byte
 	GetCommit(commitHash string) *Commit
 
 	StartTransaction()
@@ -41,7 +26,7 @@ type Repo interface {
 	DeleteNode(nodeHash string)
 
 	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
-	PutContent(content []byte) string
+	PutContent(content [][]byte) string
 	DeleteContent(contentHash string)
 }
 
@@ -82,26 +67,26 @@ type Repo interface {
 //       edge's commit's edges.
 //
 
-// SplitNode takes a node and a dist and replaces that node with two nodes, split at the specified
-// dist.  The first of those nodes will have the same Head hash, and the second will have the same
+// SplitNode takes a node and a depth and replaces that node with two nodes, split at the specified
+// depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
-func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
-	fmt.Printf("Split node %s %d\n", node, dist)
-	if dist <= 0 {
-		return "", "", fmt.Errorf("cannot split a node at dist <= 0")
+func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
+	fmt.Printf("Split node %s %d\n", node, depth)
+	if depth <= 0 {
+		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
 	}
 	var n *Node
-	for n = r.GetNode(node); n != nil && dist > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
+	for n = r.GetNode(node); n != nil && depth > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
 		fmt.Printf("Got node %v with length %d\n", n, n.Count)
-		dist -= n.Count
+		depth -= n.Count
 	}
-	fmt.Printf("%v %v\n", n, dist)
-	if n == nil || dist > n.Count {
-		return "", "", fmt.Errorf("dist is beyond original node's length")
+	fmt.Printf("%v %v\n", n, depth)
+	if n == nil || depth > n.Count {
+		return "", "", fmt.Errorf("depth is beyond original node's length")
 	}
 
 	// For simplicity we'll just special case splitting at the very beginning of a file.
-	if n.Form == FormFile && dist == 1 {
+	if n.Form == FormFile && depth == 1 {
 		return n.Tail, n.Out[0].Node, nil
 	}
 
@@ -116,32 +101,16 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 	if content == nil {
 		return "", "", fmt.Errorf("node content not found")
 	}
-	var offset, count int
-	if len(content) > 0 && content[0] == '\n' {
-		offset++
+	if len(content) != n.Count {
+		return "", "", fmt.Errorf("%q is malformed", n.Head)
 	}
-	for ; offset < len(content); offset++ {
-		if content[offset] == '\n' {
-			count++
-			if count == dist {
-				break
-			}
-		}
-	}
-	if offset == len(content) {
-		count++
-	}
-	if count != dist {
-		fmt.Printf("%d %d %d %d\n", offset, len(content), count, n.Count)
-		return "", "", fmt.Errorf("content was malformed")
-	}
-	if offset == len(content) {
+	if depth == len(content) {
 		// No splitting necessary
 		return n.Tail, n.Out[0].Node, nil
 	}
 
-	head0, tail0 := CalculateNodeHashes(commitHash, n.In[0].Node, n.Form, content[0:offset])
-	head1, tail1 := CalculateNodeHashes(commitHash, tail0, n.Form, content[offset:])
+	head0, tail0 := CalculateNodeHashes(commitHash, n.In[0].Node, n.Form, content[0:depth])
+	head1, tail1 := CalculateNodeHashes(commitHash, tail0, n.Form, content[depth:])
 	if head0 != n.Head {
 		return "", "", fmt.Errorf("failed to calculate node head hashes properly")
 	}
@@ -157,15 +126,15 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 		}
 	}()
 
-	contentA := r.PutContent(content[0:offset])
-	contentB := r.PutContent(content[offset:])
+	contentA := r.PutContent(content[0:depth])
+	contentB := r.PutContent(content[depth:])
 
 	a := &Node{
 		Head:    head0,
 		Tail:    tail0,
 		Form:    n.Form,
 		Content: contentA,
-		Count:   dist,
+		Count:   depth,
 		In:      n.In,
 		Out:     []Edge{{Commit: commitHash, Node: head1}},
 		OutDeps: nil,
@@ -175,7 +144,7 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 		Tail:    tail1,
 		Form:    n.Form,
 		Content: contentB,
-		Count:   n.Count - dist,
+		Count:   n.Count - depth,
 		In:      []Edge{{Commit: commitHash, Node: tail0}},
 		Out:     n.Out,
 		OutDeps: n.OutDeps,
@@ -192,66 +161,6 @@ func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
 	return tail0, head1, nil
 }
 
-func (s *SimpleRepo) Apply(c *Commit) error {
-	commitHash := c.Hash()
-	if _, ok := s.Deps[commitHash]; ok {
-		return fmt.Errorf("we already have this commit")
-	}
-	for _, d := range c.Deps {
-		if _, ok := s.Deps[d]; !ok {
-			return fmt.Errorf("commit included a dependency on unknown commit %q", d)
-		}
-	}
-
-	// TODO: Do the rest of the validation.
-
-	// At this point all validation is done and we can apply the commit without issues.
-	s.Deps[commitHash] = c.Deps
-
-	var contRefs []string
-	for i, cont := range c.Contents {
-		contentHash := fmt.Sprintf("%x", skein512.Hash512(128, cont.Content))
-		s.Content[contentHash] = cont.Content
-		n := &Node{
-			Form:    FormText,
-			Content: contentHash,
-			Count:   1,
-		}
-		for _, b := range cont.Content {
-			if b == '\n' {
-				n.Count++
-			}
-		}
-		nodeID := fmt.Sprintf("%s:%d", commitHash, i)
-		s.Nodes[nodeID] = n
-		contRefs = append(contRefs, nodeID)
-		if cont.Path != "" {
-			fileID := fmt.Sprintf("file:%s", cont.Path)
-			if _, ok := s.Files[fileID]; !ok {
-				s.Files[fileID] = &FileNode{}
-			}
-			s.Files[fileID].Out = append(s.Files[fileID].Out, Edge{Commit: commitHash, Node: nodeID})
-		}
-	}
-
-	for _, e := range c.EdgeRefs {
-		src := e.Src
-		if src < len(c.NodeRefs) {
-			// TODO: Implement this - need to split nodes!
-		} else {
-			src -= len(c.NodeRefs)
-			n := s.Nodes[contRefs[src]]
-			if e.Dst == -1 {
-				n.Out = append(n.Out, Edge{Commit: commitHash, Node: "1"})
-			} else {
-				// TODO: Implement this
-			}
-		}
-	}
-
-	return nil
-}
-
 func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	n := r.GetNode("file:" + path)
 	if n == nil {
@@ -262,14 +171,24 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 		return fmt.Errorf("file was deleted")
 	}
 
+	first := true
 	for n.Out[len(n.Out)-1].Node != "1" {
 		prev := n.Out[len(n.Out)-1].Node
 		n = r.GetNode(n.Out[len(n.Out)-1].Node)
 		if n == nil {
 			fmt.Printf("Failed to find node %q\n", prev)
 		}
-		if _, err := w.Write(r.GetContent(n.Content)); err != nil {
-			return err
+		content := r.GetContent(n.Content)
+		for _, line := range content {
+			if !first {
+				if _, err := w.Write([]byte{'\n'}); err != nil {
+					return err
+				}
+			}
+			first = false
+			if _, err := w.Write(line); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -278,7 +197,7 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 func Main() {
 	r := makeFakeRepo()
 
-	content := []byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
+	content := bytes.Split([]byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n")), []byte("\n"))
 	c0 := &Commit{
 		Deps:     nil,
 		EdgeRefs: []EdgeRef{{Src: 0, Dst: -1}},
@@ -317,7 +236,7 @@ func Main() {
 			OutDeps: [][]int{{}},
 		})
 	}
-	content2 := []byte(strings.Join([]string{"", "BEANS", "MONKEYS", "BOOO!!!"}, "\n"))
+	content2 := bytes.Split([]byte(strings.Join([]string{"BEANS", "MONKEYS", "BOOO!!!", ""}, "\n")), []byte("\n"))
 	for _, n := range r.nodes {
 		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
 		fmt.Printf("Out: %v\n", n.Out)
@@ -361,10 +280,13 @@ func Main() {
 	}
 }
 
-func hashContent(form Form, content []byte) string {
+func hashContent(content [][]byte) string {
 	h := skein512.NewHash512(128)
-	// h.Write([]byte{byte(form)})
-	h.Write(content)
+	for _, line := range content {
+		length := uint32(len(line))
+		h.Write([]byte{byte(length), byte(length >> 8), byte(length >> 16), byte(length >> 24)})
+		h.Write(line)
+	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
@@ -415,13 +337,8 @@ func Apply(r Repo, c *Commit) error {
 		// todo: set head and tail
 		n := &Node{
 			Form:    nc.Form,
-			Content: hashContent(nc.Form, nc.Content), // Content hash
-			Count:   0,
-		}
-		for _, b := range nc.Content {
-			if b == '\n' {
-				n.Count++
-			}
+			Content: hashContent(nc.Content), // Content hash
+			Count:   len(nc.Content),
 		}
 
 		var prev string
@@ -562,7 +479,7 @@ type NewContent struct {
 	Path string
 
 	Form    Form
-	Content []byte
+	Content [][]byte
 }
 
 type Commit struct {
@@ -596,8 +513,9 @@ func (c *Commit) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.Contents)))
 	for _, c := range c.Contents {
-		binary.Write(h, binary.LittleEndian, uint32(len(c.Content)))
-		h.Write(c.Content)
+		hash := hashContent(c.Content)
+		binary.Write(h, binary.LittleEndian, uint32(len(hash)))
+		h.Write([]byte(hash))
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -635,22 +553,17 @@ type Node struct {
 	OutDeps [][]int
 }
 
-func CalculateNodeHashes(commit, prev string, form Form, content []byte) (head, tail string) {
+func CalculateNodeHashes(commit, prev string, form Form, content [][]byte) (head, tail string) {
 	if form != FormText {
 		panic("unknown form")
 	}
-	divs := []int{0}
-	for i := 1; i < len(content); i++ {
-		if content[i] == '\n' {
-			divs = append(divs, i)
-		}
-	}
-	divs = append(divs, len(content))
-	for i := 0; i < len(divs)-1; i++ {
+	for _, line := range content {
 		h := skein512.NewHash512(128)
+		binary.Write(h, binary.LittleEndian, uint32(len(commit)))
 		h.Write([]byte(commit))
+		binary.Write(h, binary.LittleEndian, uint32(len(prev)))
 		h.Write([]byte(prev))
-		h.Write(content[divs[i]:divs[i+1]]) // This isn't including the newlines, but that's ok.
+		h.Write(line)
 		prev = fmt.Sprintf("%x", h.Sum(nil))
 		if head == "" {
 			head = prev
@@ -725,7 +638,7 @@ const (
 type testRepo struct {
 	nodes        map[string]*Node
 	commits      map[string]*Commit
-	content      map[string][]byte
+	content      map[string][][]byte
 	refs         map[string]string
 	transactions int
 }
@@ -734,7 +647,7 @@ func makeFakeRepo() *testRepo {
 	return &testRepo{
 		nodes:   make(map[string]*Node),
 		commits: make(map[string]*Commit),
-		content: make(map[string][]byte),
+		content: make(map[string][][]byte),
 		refs:    make(map[string]string),
 	}
 }
@@ -748,7 +661,7 @@ func (r *testRepo) GetNode(nodeHash string) *Node {
 func (r *testRepo) GetCommit(commitHash string) *Commit {
 	return r.commits[commitHash]
 }
-func (r *testRepo) GetContent(contentHash string) []byte {
+func (r *testRepo) GetContent(contentHash string) [][]byte {
 	return r.content[contentHash]
 }
 func (r *testRepo) StartTransaction() {
@@ -776,8 +689,8 @@ func (r *testRepo) PutCommit(c *Commit) {
 func (r *testRepo) DeleteNode(nodeHash string) {
 	delete(r.nodes, nodeHash)
 }
-func (r *testRepo) PutContent(content []byte) string {
-	hash := fmt.Sprintf("%x", skein512.Hash512(128, content))
+func (r *testRepo) PutContent(content [][]byte) string {
+	hash := hashContent(content)
 	r.content[hash] = content
 	return hash
 }
