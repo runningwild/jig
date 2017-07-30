@@ -1,5 +1,5 @@
-// NEXT: Apply the commits, starting with ApplyEdge, probably.  Also NodeRefs should specify a Node now, not an Edge.
-
+// NEXT: Text format should not include newlines, they should be added when nodes are traversed, it
+// would have to be done anyway to deal with different newlines on different OSes.
 package graph
 
 import (
@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 
-	skein512 "github.com/runningwild/skein/hash/512"
 	"os"
 	"strings"
+
+	skein512 "github.com/runningwild/skein/hash/512"
 )
 
 type SimpleRepo struct {
@@ -30,11 +31,13 @@ type Repo interface {
 	GetRef(ptr string) string
 	GetNode(nodeHash string) *Node
 	GetContent(contentHash string) []byte
+	GetCommit(commitHash string) *Commit
 
 	StartTransaction()
 	EndTransaction() error
 	PutRef(ptr, val string)
 	PutNode(n *Node)
+	PutCommit(c *Commit)
 	DeleteNode(nodeHash string)
 
 	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
@@ -42,7 +45,6 @@ type Repo interface {
 	DeleteContent(contentHash string)
 }
 
-// NEXT: splitNode needs to split a node but maintain the hash for the front of the node.
 //       this may be doable by finding a consistent way to hash nodes.
 //       A new edge will either point to a new node, the head of an existing node, or the body of an
 //       existing node.
@@ -84,18 +86,25 @@ type Repo interface {
 // dist.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, dist int) (tail, head string, err error) {
+	fmt.Printf("Split node %s %d\n", node, dist)
 	if dist <= 0 {
-		return "", "", fmt.Errorf("cannot split a node at dist < 0")
+		return "", "", fmt.Errorf("cannot split a node at dist <= 0")
 	}
-
 	var n *Node
-	for n = r.GetNode(node); dist > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
+	for n = r.GetNode(node); n != nil && dist > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
+		fmt.Printf("Got node %v with length %d\n", n, n.Count)
 		dist -= n.Count
 	}
 	fmt.Printf("%v %v\n", n, dist)
 	if n == nil || dist > n.Count {
 		return "", "", fmt.Errorf("dist is beyond original node's length")
 	}
+
+	// For simplicity we'll just special case splitting at the very beginning of a file.
+	if n.Form == FormFile && dist == 1 {
+		return n.Tail, n.Out[0].Node, nil
+	}
+
 	commitHash := n.In[0].Commit
 
 	// Split the content
@@ -254,7 +263,11 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	}
 
 	for n.Out[len(n.Out)-1].Node != "1" {
+		prev := n.Out[len(n.Out)-1].Node
 		n = r.GetNode(n.Out[len(n.Out)-1].Node)
+		if n == nil {
+			fmt.Printf("Failed to find node %q\n", prev)
+		}
 		if _, err := w.Write(r.GetContent(n.Content)); err != nil {
 			return err
 		}
@@ -264,59 +277,283 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 
 func Main() {
 	r := makeFakeRepo()
-	content := []byte(strings.Join([]string{"apple", "banana", "car", "dummy", "echo", "fudge", "gobble", "hug", "ike", ""}, "\n"))
-	contentHash := r.PutContent(content)
-	head, tail := CalculateNodeHashes("commit-0", "file:foo.txt", FormText, content)
-	r.PutNode(&Node{
-		Head:    head,
-		Tail:    tail,
-		Form:    FormText,
-		Content: contentHash,
-		Count:   10,
-		In:      []Edge{{Commit: "commit-0", Node: "file:foo.txt", Primary: true}},
-		Out:     []Edge{{Commit: "commit-0", Node: "1", Primary: true}},
-		OutDeps: [][]int{{}},
-	})
-	r.PutNode(&Node{
-		Head:    "file:foo.txt",
-		Tail:    "",
-		Form:    FormFile,
-		Out:     []Edge{{Commit: "commit-0", Node: head, Primary: true}},
-		OutDeps: [][]int{{}},
-	})
-	midTail, midHead, err := SplitNode(r, head, 3)
-	if err != nil {
-		panic(err)
+
+	content := []byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
+	c0 := &Commit{
+		Deps:     nil,
+		EdgeRefs: []EdgeRef{{Src: 0, Dst: -1}},
+		Contents: []NewContent{
+			{
+				Path:    "foo.txt",
+				Form:    FormText,
+				Content: content,
+			},
+		},
+	}
+	if err := Apply(r, c0); err != nil {
+		fmt.Printf("failed to apply first commit: %v", err)
+		return
+	}
+
+	if false {
+		contentHash := r.PutContent(content)
+		head, tail := CalculateNodeHashes("commit-0", "file:foo.txt", FormText, content)
+		r.PutNode(&Node{
+			Head:    head,
+			Tail:    tail,
+			Form:    FormText,
+			Content: contentHash,
+			Count:   10,
+			In:      []Edge{{Commit: "commit-0", Node: "file:foo.txt", Primary: true}},
+			Out:     []Edge{{Commit: "commit-0", Node: "1", Primary: true}},
+			OutDeps: [][]int{{}},
+		})
+		r.PutNode(&Node{
+			Head:    "file:foo.txt",
+			Tail:    "",
+			Count:   1,
+			Form:    FormFile,
+			Out:     []Edge{{Commit: "commit-0", Node: head, Primary: true}},
+			OutDeps: [][]int{{}},
+		})
 	}
 	content2 := []byte(strings.Join([]string{"", "BEANS", "MONKEYS", "BOOO!!!"}, "\n"))
-	content2Hash := r.PutContent(content2)
-	head2, tail2 := CalculateNodeHashes("commit-2", midTail, FormText, content2)
-	r.PutNode(&Node{
-		Head:    head2,
-		Tail:    tail2,
-		Form:    FormText,
-		Content: content2Hash,
-		Count:   4,
-		In:      []Edge{{Commit: "commit-2", Node: midTail, Primary: true}},
-		Out:     []Edge{{Commit: "commit-2", Node: midHead, Primary: true}},
-		OutDeps: [][]int{{}},
-	})
-	n := r.GetNode(r.GetRef(midTail))
-	n.Out = append(n.Out, Edge{Commit: "commit-2", Node: head2, Primary: true})
-	n.OutDeps = append(n.OutDeps, []int{0})
-	r.PutNode(n)
-	n = r.GetNode(midHead)
-	n.In = append(n.In, Edge{Commit: "commit-2", Node: tail2, Primary: true})
-	r.PutNode(n)
+	for _, n := range r.nodes {
+		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+		fmt.Printf("Out: %v\n", n.Out)
+		fmt.Printf("In: %v\n", n.In)
+		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+	}
+	fmt.Printf("Printing 'foo.txt'----------\n")
 	PrintFile(r, "foo.txt", nil, os.Stdout)
+	fmt.Printf("----------------------------\n\n\n")
+
+	c := &Commit{
+		Deps: []string{c0.Hash()},
+		EdgeRefs: []EdgeRef{
+			EdgeRef{Src: 0, Dst: 3},
+			EdgeRef{Src: 3, Dst: 1},
+
+			EdgeRef{Src: 2, Dst: -1},
+		},
+		NodeRefs: []NodeRef{
+			{Node: "file:foo.txt", Depth: 2}, // 'alpha'
+			{Node: "file:foo.txt", Depth: 4}, // 'charlie'
+			{Node: "file:foo.txt", Depth: 8},
+		},
+		Contents: []NewContent{
+			{Content: content2},
+		},
+	}
+	if err := Apply(r, c); err != nil {
+		fmt.Printf("Failed to apply commit: %v", err)
+		return
+	}
+	fmt.Printf("Applying a commit...\n")
+	fmt.Printf("Printing 'foo.txt'----------\n")
+	PrintFile(r, "foo.txt", nil, os.Stdout)
+	fmt.Printf("----------------------------\n")
+	for _, n := range r.nodes {
+		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+		fmt.Printf("Out: %v\n", n.Out)
+		fmt.Printf("In: %v\n", n.In)
+		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+	}
+}
+
+func hashContent(form Form, content []byte) string {
+	h := skein512.NewHash512(128)
+	// h.Write([]byte{byte(form)})
+	h.Write(content)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func Apply(r Repo, c *Commit) error {
+	// Validate that we haven't already applied this commit.
+	commitHash := c.Hash()
+	if c2 := r.GetCommit(commitHash); c2 != nil {
+		return fmt.Errorf("this commit has already been applied")
+	}
+
+	// Validate that we have all of the commits this commit depends on.
+	for _, dep := range c.Deps {
+		if d := r.GetCommit(dep); d == nil {
+			return fmt.Errorf("this commit depends on %q which we don't have", dep)
+		}
+	}
+
+	// TODO: Validate that all new content has an outgoing edge (which may be to an EOF marker).
+
+	// Split all nodes at the appropriate positions.
+	for _, e := range c.EdgeRefs {
+		if e.Src >= 0 && e.Src < len(c.NodeRefs) {
+			if _, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth); err != nil {
+				return fmt.Errorf("error splitting src node: %v", err)
+			}
+		}
+		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
+			if _, _, err := SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1); err != nil {
+				return fmt.Errorf("error splitting dst node: %v", err)
+			}
+		}
+	}
+
+	// Now go back and get the hashes.  We have to do all of the splitting first because we might
+	// split some nodes multiple times before we're done.
+	// for _, nr := range c.NodeRefs {
+	// 	_, head, err := SplitNode(r, nr.Node, nr.Depth)
+	// 	if err != nil {
+	// 		return fmt.Errorf("error splitting node: %v", err)
+	// 	}
+	// 	nodeHeads = append(nodeHeads, head)
+	// 	nodeTails = append(nodeTails, r.GetNode(head).Tail)
+	// }
+
+	// Create all of the new nodes added by this commit.
+	var newNodes []string
+	for i, nc := range c.Contents {
+		// todo: set head and tail
+		n := &Node{
+			Form:    nc.Form,
+			Content: hashContent(nc.Form, nc.Content), // Content hash
+			Count:   0,
+		}
+		for _, b := range nc.Content {
+			if b == '\n' {
+				n.Count++
+			}
+		}
+
+		var prev string
+		if nc.Path != "" {
+			prev = "file:" + nc.Path
+			n.In = append(n.In, Edge{Commit: commitHash, Node: prev, Primary: true})
+		} else {
+			// We need to know the previous node's hash to calculate this node's hash.  If this is a
+			// new file then it's just the path, otherwise we need to look through the edges to find
+			// which one is pointing to this node, the other end of that edge will be the previous node.
+			for _, e := range c.EdgeRefs {
+				if e.Dst != len(c.NodeRefs)+i {
+					continue
+				}
+				if e.Src >= len(c.NodeRefs) {
+					// There is no reason for an edge to connect two new nodes, it might as well be
+					// a single node, so rather than tracing backward to the previously known node
+					// we can just bail here.
+					// TODO: This needs to be in validation, we shouldn't be bailing here.
+					return fmt.Errorf("malformed commit: edge connected two new nodes")
+				}
+				prevNode := r.GetNode(c.NodeRefs[e.Src].Node)
+				// if prevNode != nil {
+				// 	// TODO: This check should be part of validation.
+				// 	return fmt.Errorf("commit referred to %s which we don't have", c.NodeRefs[e.Src].Node)
+				// }
+				prev = prevNode.Tail
+			}
+		}
+		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
+		r.PutNode(n)
+		if nc.Path != "" {
+			fileHash := "file:" + nc.Path
+			r.PutNode(&Node{
+				Head:    fileHash,
+				Tail:    fileHash,
+				Count:   1,
+				Form:    FormFile,
+				Out:     []Edge{{Commit: commitHash, Node: n.Head, Primary: true}},
+				OutDeps: [][]int{{}},
+			})
+			r.PutRef(fileHash, fileHash)
+		}
+		newNodes = append(newNodes, n.Head)
+		// nodeHeads = append(nodeHeads, n.Head)
+		// nodeTails = append(nodeTails, n.Tail)
+	}
+
+	// TODO: We might want transactions to be recursive, so that we can split nodes here and, if the
+	// commit fails to apply, unsplit them for free.
+
+	// r.StartTransaction()
+	// defer r.EndTransaction()
+
+	for _, nc := range c.Contents {
+		r.PutContent(nc.Content)
+	}
+
+	depsMap := make(map[string]bool)
+	for _, dep := range c.Deps {
+		depsMap[dep] = true
+	}
+
+	for _, e := range c.EdgeRefs {
+		var srcNode, dstNode *Node
+		var dstHead string
+		if e.Src < len(c.NodeRefs) {
+			tail, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth)
+			if err != nil {
+				return fmt.Errorf("lame split error: %v", err)
+			}
+			srcNode = r.GetNode(r.GetRef(tail))
+			fmt.Printf("%q -> %q -> %v\n", tail, r.GetRef(tail), srcNode)
+		} else {
+			srcNode = r.GetNode(newNodes[e.Src-len(c.NodeRefs)])
+		}
+
+		switch {
+		case e.Dst == -1:
+			dstHead = "1"
+		case e.Dst == -2:
+			panic("not implemented yet")
+		case e.Dst >= 0 && e.Dst < len(c.NodeRefs):
+			var err error
+			_, dstHead, err = SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1)
+			if err != nil {
+				return fmt.Errorf("lame split error: %v", err)
+			}
+			dstNode = r.GetNode(dstHead)
+		case e.Dst >= len(c.NodeRefs):
+			dstNode = r.GetNode(newNodes[e.Dst-len(c.NodeRefs)])
+			dstHead = dstNode.Head
+		default:
+			panic(fmt.Sprintf("what the beans?  got dst %d", e.Dst))
+		}
+
+		srcNode.Out = append(srcNode.Out, Edge{
+			Commit:  commitHash,
+			Node:    dstHead,
+			Primary: true,
+		})
+		var outDeps []int
+		for i := range srcNode.Out {
+			if depsMap[srcNode.Out[i].Commit] {
+				outDeps = append(outDeps, i)
+			}
+		}
+		srcNode.OutDeps = append(srcNode.OutDeps, outDeps)
+		r.PutNode(srcNode)
+
+		if dstNode != nil {
+			dstNode.In = append(dstNode.In, Edge{
+				Commit:  commitHash,
+				Node:    srcNode.Tail,
+				Primary: true,
+			})
+			r.PutNode(dstNode)
+		}
+	}
+
+	r.PutCommit(c)
+	return nil
 }
 
 type EdgeRef struct {
 	Src, Dst int // indexes into NodeRefs and Contents
+	// Dst == -1: "1", this is an EOF
+	// Dst == -2: "2", this file was deleted (must come from a ref to a file)
 }
 
 type NodeRef struct {
-	Edge  string
+	Node  string
 	Depth int
 }
 
@@ -324,6 +561,7 @@ type NewContent struct {
 	// Path can be empty, if so it is additional data added into an existing file.
 	Path string
 
+	Form    Form
 	Content []byte
 }
 
@@ -351,8 +589,8 @@ func (c *Commit) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.NodeRefs)))
 	for _, n := range c.NodeRefs {
-		binary.Write(h, binary.LittleEndian, uint32(len(n.Edge)))
-		h.Write([]byte(n.Edge))
+		binary.Write(h, binary.LittleEndian, uint32(len(n.Node)))
+		h.Write([]byte(n.Node))
 		binary.Write(h, binary.LittleEndian, uint32(n.Depth))
 	}
 
@@ -486,6 +724,7 @@ const (
 
 type testRepo struct {
 	nodes        map[string]*Node
+	commits      map[string]*Commit
 	content      map[string][]byte
 	refs         map[string]string
 	transactions int
@@ -494,6 +733,7 @@ type testRepo struct {
 func makeFakeRepo() *testRepo {
 	return &testRepo{
 		nodes:   make(map[string]*Node),
+		commits: make(map[string]*Commit),
 		content: make(map[string][]byte),
 		refs:    make(map[string]string),
 	}
@@ -504,6 +744,9 @@ func (r *testRepo) GetRef(ptr string) string {
 }
 func (r *testRepo) GetNode(nodeHash string) *Node {
 	return r.nodes[nodeHash]
+}
+func (r *testRepo) GetCommit(commitHash string) *Commit {
+	return r.commits[commitHash]
 }
 func (r *testRepo) GetContent(contentHash string) []byte {
 	return r.content[contentHash]
@@ -526,6 +769,9 @@ func (r *testRepo) PutRef(ptr, val string) {
 }
 func (r *testRepo) PutNode(n *Node) {
 	r.nodes[n.Head] = n
+}
+func (r *testRepo) PutCommit(c *Commit) {
+	r.commits[c.Hash()] = c
 }
 func (r *testRepo) DeleteNode(nodeHash string) {
 	delete(r.nodes, nodeHash)
