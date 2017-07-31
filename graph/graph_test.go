@@ -2,6 +2,8 @@ package graph_test
 
 import (
 	"bytes"
+	"os"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -96,6 +98,105 @@ func TestSplitNode(t *testing.T) {
 			So(b, ShouldEqual, "1")
 			So(len(r.nodes), ShouldEqual, before)
 		})
+	})
+}
+
+// TODO: Need to test the following kinds of invalid commits at the very least:
+// - Edges that create cycles.
+// - An edge from nodes in one file to nodes in another file, without corresponding nodes from the other
+//   file back to the first one.  This would cause future modifications to that shared potion to be
+//   reflected in both files.
+func TestApplyCommits(t *testing.T) {
+	Convey("applied commits", t, func() {
+		r := makeFakeRepo()
+		content0 := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "")
+		c0 := &graph.Commit{
+			Deps:     nil,
+			EdgeRefs: []graph.EdgeRef{{Src: 0, Dst: -1}},
+			Contents: []graph.NewContent{
+				{
+					Path:    "foo.txt",
+					Form:    graph.FormText,
+					Content: content0,
+				},
+			},
+		}
+		So(graph.Apply(r, c0), ShouldBeNil)
+		So(graph.Apply(r, c0), ShouldNotBeNil) // Can't apply twice
+
+		buf := bytes.NewBuffer(nil)
+		So(graph.PrintFile(r, "foo.txt", nil, buf), ShouldBeNil)
+		So(string(buf.Bytes()), ShouldResemble, strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
+		So(graph.PrintFile(r, "bar.txt", nil, buf), ShouldNotBeNil)
+
+		content1 := stringsToContent("BRAVO", "CHARLIE")
+		// This commit capitalizes the lines with 'bravo' and 'charlie'
+		c1 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{Src: 0, Dst: 2},
+				{Src: 2, Dst: 1},
+			},
+			NodeRefs: []graph.NodeRef{
+				{Node: "file:foo.txt", Depth: 2}, // 'alpha'
+				{Node: "file:foo.txt", Depth: 5}, // 'delta'
+			},
+			Contents: []graph.NewContent{
+				{Content: content1},
+			},
+		}
+
+		So(graph.Apply(r, c1), ShouldBeNil)
+		buf.Truncate(0)
+		So(graph.PrintFile(r, "foo.txt", nil, buf), ShouldBeNil)
+		So(string(buf.Bytes()), ShouldResemble, strings.Join([]string{"alpha", "BRAVO", "CHARLIE", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
+
+		return
+		fmt.Printf("Printing 'foo.txt'----------\n")
+		graph.PrintFile(r, "foo.txt", nil, os.Stdout)
+		fmt.Printf("----------------------------\n")
+
+		fmt.Printf("Starting with %q\n", "file:foo.txt")
+		fmt.Printf("Now to %q\n", r.nodes["file:foo.txt"].Out[0].Node)
+		fmt.Printf("Now to %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node)
+		fmt.Printf(" on commit %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Commit)
+
+		// This should be the node with the capitalized text
+		// r.nodes["file:foo.txt"].Out[1].Node
+		c2 := &graph.Commit{
+			Deps: []string{c0.Hash(), c1.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{Src: 0, Dst: 1},
+			},
+			NodeRefs: []graph.NodeRef{
+				{
+					Node:  r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node,
+					Depth: 2,
+				},
+				{
+					Node:  "file:foo.txt",
+					Depth: 6,
+				},
+			},
+			Contents: nil,
+		}
+
+		for _, n := range r.nodes {
+			fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+			fmt.Printf("Out: %v\n", n.Out)
+			fmt.Printf("In: %v\n", n.In)
+			fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+			fmt.Printf("\n\n\n\n\n")
+		}
+
+		fmt.Printf("Applying a commit...\n")
+		if err := graph.Apply(r, c2); err != nil {
+			fmt.Printf("Failed to apply commit: %v", err)
+			return
+		}
+		fmt.Printf("Printing 'foo.txt'----------\n")
+		graph.PrintFile(r, "foo.txt", nil, os.Stdout)
+		fmt.Printf("----------------------------\n")
 	})
 }
 

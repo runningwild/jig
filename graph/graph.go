@@ -71,16 +71,13 @@ type Repo interface {
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
-	fmt.Printf("Split node %s %d\n", node, depth)
 	if depth <= 0 {
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
 	}
 	var n *Node
 	for n = r.GetNode(node); n != nil && depth > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
-		fmt.Printf("Got node %v with length %d\n", n, n.Count)
 		depth -= n.Count
 	}
-	fmt.Printf("%v %v\n", n, depth)
 	if n == nil || depth > n.Count {
 		return "", "", fmt.Errorf("depth is beyond original node's length")
 	}
@@ -173,10 +170,14 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 
 	first := true
 	for n.Out[len(n.Out)-1].Node != "1" {
+		// NEXT: Use the Frontier to decide how to traverse the edges.
+		// Go through all of the out edges and consider only the ones in the Frontier, then choose
+		// the one that is not dependent on any in that set.
+		// observe := make(map[string]bool)
 		prev := n.Out[len(n.Out)-1].Node
 		n = r.GetNode(n.Out[len(n.Out)-1].Node)
 		if n == nil {
-			fmt.Printf("Failed to find node %q\n", prev)
+			return fmt.Errorf("Failed to find node %q\n", prev)
 		}
 		content := r.GetContent(n.Content)
 		for _, line := range content {
@@ -214,70 +215,82 @@ func Main() {
 		return
 	}
 
-	if false {
-		contentHash := r.PutContent(content)
-		head, tail := CalculateNodeHashes("commit-0", "file:foo.txt", FormText, content)
-		r.PutNode(&Node{
-			Head:    head,
-			Tail:    tail,
-			Form:    FormText,
-			Content: contentHash,
-			Count:   10,
-			In:      []Edge{{Commit: "commit-0", Node: "file:foo.txt", Primary: true}},
-			Out:     []Edge{{Commit: "commit-0", Node: "1", Primary: true}},
-			OutDeps: [][]int{{}},
-		})
-		r.PutNode(&Node{
-			Head:    "file:foo.txt",
-			Tail:    "",
-			Count:   1,
-			Form:    FormFile,
-			Out:     []Edge{{Commit: "commit-0", Node: head, Primary: true}},
-			OutDeps: [][]int{{}},
-		})
-	}
-	content2 := bytes.Split([]byte(strings.Join([]string{"BEANS", "MONKEYS", "BOOO!!!", ""}, "\n")), []byte("\n"))
-	for _, n := range r.nodes {
-		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-		fmt.Printf("Out: %v\n", n.Out)
-		fmt.Printf("In: %v\n", n.In)
-		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-	}
+	content2 := bytes.Split([]byte(strings.Join([]string{"BRAVO", "CHARLIE"}, "\n")), []byte("\n"))
+	// for _, n := range r.nodes {
+	// 	fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+	// 	fmt.Printf("Out: %v\n", n.Out)
+	// 	fmt.Printf("In: %v\n", n.In)
+	// 	fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+	// }
 	fmt.Printf("Printing 'foo.txt'----------\n")
 	PrintFile(r, "foo.txt", nil, os.Stdout)
 	fmt.Printf("----------------------------\n\n\n")
 
-	c := &Commit{
+	// This commit capitalizes the lines with 'bravo' and 'charlie'
+	c1 := &Commit{
 		Deps: []string{c0.Hash()},
 		EdgeRefs: []EdgeRef{
-			EdgeRef{Src: 0, Dst: 3},
-			EdgeRef{Src: 3, Dst: 1},
-
-			EdgeRef{Src: 2, Dst: -1},
+			{Src: 0, Dst: 2},
+			{Src: 2, Dst: 1},
 		},
 		NodeRefs: []NodeRef{
 			{Node: "file:foo.txt", Depth: 2}, // 'alpha'
-			{Node: "file:foo.txt", Depth: 4}, // 'charlie'
-			{Node: "file:foo.txt", Depth: 8},
+			{Node: "file:foo.txt", Depth: 5}, // 'delta'
 		},
 		Contents: []NewContent{
 			{Content: content2},
 		},
 	}
-	if err := Apply(r, c); err != nil {
+	fmt.Printf("Applying commit %q...\n", c1.Hash())
+	if err := Apply(r, c1); err != nil {
 		fmt.Printf("Failed to apply commit: %v", err)
 		return
 	}
-	fmt.Printf("Applying a commit...\n")
 	fmt.Printf("Printing 'foo.txt'----------\n")
 	PrintFile(r, "foo.txt", nil, os.Stdout)
 	fmt.Printf("----------------------------\n")
+
+	fmt.Printf("Starting with %q\n", "file:foo.txt")
+	fmt.Printf("Now to %q\n", r.nodes["file:foo.txt"].Out[0].Node)
+	fmt.Printf("Now to %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node)
+	fmt.Printf(" on commit %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Commit)
+
+	// This should be the node with the capitalized text
+	// r.nodes["file:foo.txt"].Out[1].Node
+	c2 := &Commit{
+		Deps: []string{c0.Hash(), c1.Hash()},
+		EdgeRefs: []EdgeRef{
+			{Src: 0, Dst: 1},
+		},
+		NodeRefs: []NodeRef{
+			{
+				Node:  r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node,
+				Depth: 2,
+			},
+			{
+				Node:  "file:foo.txt",
+				Depth: 6,
+			},
+		},
+		Contents: nil,
+	}
+
 	for _, n := range r.nodes {
 		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
 		fmt.Printf("Out: %v\n", n.Out)
 		fmt.Printf("In: %v\n", n.In)
 		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+		fmt.Printf("\n\n\n\n\n")
 	}
+
+	fmt.Printf("Applying a commit...\n")
+	if err := Apply(r, c2); err != nil {
+		fmt.Printf("Failed to apply commit: %v", err)
+		return
+	}
+	fmt.Printf("Printing 'foo.txt'----------\n")
+	PrintFile(r, "foo.txt", nil, os.Stdout)
+	fmt.Printf("----------------------------\n")
 }
 
 func hashContent(content [][]byte) string {
@@ -381,6 +394,8 @@ func Apply(r Repo, c *Commit) error {
 				OutDeps: [][]int{{}},
 			})
 			r.PutRef(fileHash, fileHash)
+		} else {
+			r.PutRef(n.Tail, n.Head)
 		}
 		newNodes = append(newNodes, n.Head)
 		// nodeHeads = append(nodeHeads, n.Head)
