@@ -189,10 +189,21 @@ func TestVerge(t *testing.T) {
 			}
 		}
 		v := graph.MakeVerge(r, headFrontier{}, "foo.txt")
+
 		// Should be able to advance until we get to the snk node.
 		for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
 			v.Advance(n)
 			So(v.Prev(), ShouldContain, n)
+			fmt.Printf("BING\n")
+			So(len(v.Next()), ShouldBeGreaterThan, 0)
+		}
+
+		// Should be able to retract until we get to the snk node.
+		for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
+			v.Retract(n)
+			So(v.Next(), ShouldContain, n)
+			fmt.Printf("BING\n")
+			So(len(v.Prev()), ShouldBeGreaterThan, 0)
 		}
 	})
 }

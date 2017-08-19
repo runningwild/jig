@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 )
@@ -20,6 +21,7 @@ type Verge struct {
 	r Repo
 	f Frontier
 
+	// Maps from commit hash to node hash for each edge on the verge.
 	forward, backward map[string]string
 
 	deps, rdeps simpleGraph
@@ -46,16 +48,47 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 	return v
 }
 
+func (v *Verge) move(node string, forward, backward map[string]string, getIn func(*Node) []Edge) {
+	n := v.r.GetNode(node)
+	for _, e := range getIn(n) {
+		if v.forward[e.Commit] != node {
+			panic("invalid advance node")
+		}
+		delete(forward, e.Commit)
+		delete(backward, e.Commit)
+		v.rdeps.removeNode(e.Commit)
+	}
+	for _, e := range n.Out {
+		forward[e.Commit] = e.Node
+		backward[e.Commit] = node
+		for _, dep := range v.r.GetCommit(e.Commit).Deps {
+			v.rdeps.addEdge(dep, e.Commit)
+		}
+	}
+}
+
 func (v *Verge) Advance(node string) {
+	// v.move(node, v.forward, v.backward, func(n *Node) []Edge { return n.In })
+	// return
 	n := v.r.GetNode(node)
 	fmt.Printf("Trying to advance verge past %q\n", node)
 	fmt.Printf("%d inputs to this node:\n", len(n.In))
 	for _, e := range n.In {
-		fmt.Printf("    Commit %q -> node %q\n", e.Commit, e.Node)
+		nn := v.r.GetNode(e.Node)
+		var content string
+		if nn != nil {
+			content = string(bytes.Join(v.r.GetContent(nn.Content), []byte(".")))
+		}
+		fmt.Printf("    Commit %q -> node %q: %s\n", e.Commit, e.Node, content)
 	}
 	fmt.Printf("%d outputs from this node:\n", len(n.Out))
 	for _, e := range n.Out {
-		fmt.Printf("    Commit %q -> node %q\n", e.Commit, e.Node)
+		nn := v.r.GetNode(e.Node)
+		var content string
+		if nn != nil {
+			content = string(bytes.Join(v.r.GetContent(nn.Content), []byte(".")))
+		}
+		fmt.Printf("    Commit %q -> node %q: %s\n", e.Commit, e.Node, content)
 	}
 	fmt.Printf("Current forward set:\n")
 	for k, v := range v.forward {
@@ -86,8 +119,11 @@ func (v *Verge) Advance(node string) {
 }
 
 func (v *Verge) Retract(node string) {
+	fmt.Printf("Back: %v\n", v.backward)
+	// v.move(node, v.backward, v.forward, func(n *Node) []Edge { return n.Out })
+	// return
 	n := v.r.GetNode(node)
-	fmt.Printf("Trying to advance verge past %q\n", node)
+	fmt.Printf("Trying to retract verge past %q\n", node)
 	fmt.Printf("%d inputs to this node:\n", len(n.In))
 	for _, e := range n.In {
 		fmt.Printf("    Commit %q -> node %q\n", e.Commit, e.Node)
@@ -96,8 +132,8 @@ func (v *Verge) Retract(node string) {
 	for _, e := range n.Out {
 		fmt.Printf("    Commit %q -> node %q\n", e.Commit, e.Node)
 	}
-	fmt.Printf("Current forward set:\n")
-	for k, v := range v.forward {
+	fmt.Printf("Current backward set:\n")
+	for k, v := range v.backward {
 		fmt.Printf("    %s %s\n", k, v)
 	}
 	fmt.Printf("rdeps before:\n%v\n", v.rdeps)
@@ -105,7 +141,16 @@ func (v *Verge) Retract(node string) {
 	for _, e := range n.Out {
 		fmt.Printf("Checking incoming edge from commit %q from node %q\n", e.Commit, e.Node)
 		fmt.Printf("  That is a ref for %q\n", v.r.GetRef(e.Node))
-		if v.backward[e.Commit] != node {
+		// if r := v.r.GetRef(node); r != "" {
+		// node = r
+		// }
+		check := v.backward[e.Commit]
+		if r := v.r.GetRef(check); r != "" {
+			check = r
+		}
+		if check != node {
+			fmt.Printf("Looking for %s\n", node)
+			fmt.Printf("Checking it in %v, %v\n", v.backward, v.backward[e.Commit])
 			panic("invalid advance node")
 		}
 		delete(v.backward, e.Commit)
@@ -113,7 +158,9 @@ func (v *Verge) Retract(node string) {
 		// v.deps.removeNode(e.Commit)
 		v.rdeps.removeNode(e.Commit)
 	}
-	for _, e := range n.Out {
+	for _, e := range n.In {
+		fmt.Printf("Adding a backward edge to %s", e.Node)
+		fmt.Printf("%s\n", v.r.GetRef(e.Node))
 		v.backward[e.Commit] = e.Node
 		v.forward[e.Commit] = node
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
@@ -122,6 +169,7 @@ func (v *Verge) Retract(node string) {
 		}
 	}
 	fmt.Printf("rdeps after:\n%v\n", v.rdeps)
+	fmt.Printf("Back: %v\n", v.backward)
 }
 
 func (v *Verge) Conflicts() []string {
@@ -145,72 +193,70 @@ func (v *Verge) Conflicts() []string {
 	return dominators
 }
 
-func transitiveClosureHelper(r Repo, used, tc map[string]bool, commit string) {
-	if used[commit] {
-		return
-	}
-	used[commit] = true
-	tc[commit] = true
-	for _, dep := range r.GetCommit(commit).Deps {
-		transitiveClosureHelper(r, used, tc, dep)
-	}
-
-}
-
 // TODO: A lot of this depends on the fact that a Verge can never cut two edges from the same commit
 // at the same time (excepting the reverse-edge situation).  This needs to be part of verification.
 // next returns a list of nodes that could be used as the next node the Verge can pass.
 // TODO: handle reverse edges
 func (v *Verge) Next() []string {
-	// Get a set of all nodes on the out end of all edges on the Verge.
-	dsts := make(map[string]bool)
-	for _, dst := range v.forward {
-		dsts[dst] = true
-	}
-
-	// Acceptable nodes are ones whose inputs edges are all on the Verge.
-	var good []string
-	for dst := range dsts {
-		n := v.r.GetNode(dst)
-		count := 0
-		for _, e := range n.In {
-			if v.forward[e.Commit] == dst {
-				count++
-			}
-		}
-		if count != len(n.In) {
-			continue
-		}
-		good = append(good, dst)
-	}
-
-	return good
+	return v.look(v.forward, func(n *Node) []Edge { return n.In })
 }
 
 func (v *Verge) Prev() []string {
+	return v.look(v.backward, func(n *Node) []Edge { return n.Out })
+}
+
+func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []string {
 	// Get a set of all nodes on the out end of all edges on the Verge.
 	dsts := make(map[string]bool)
-	for _, dst := range v.backward {
+	for _, dst := range forward {
 		dsts[dst] = true
 	}
-	fmt.Printf("Nodes on the verge: %v\n", dsts)
+
+	var keys []string
+	for key := range forward {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fmt.Printf("Looking through:\n")
+	for _, key := range keys {
+		var content string
+		ns := forward[key]
+		if r := v.r.GetRef(ns); r != "" {
+			ns = r
+		}
+		n := v.r.GetNode(ns)
+		if n != nil {
+			content = string(bytes.Join(v.r.GetContent(n.Content), []byte(".")))
+		}
+		fmt.Printf("Commit %s -> Node %s: %s\n", key, forward[key], content)
+	}
+	fmt.Printf("done looking\n")
 
 	// Acceptable nodes are ones whose inputs edges are all on the Verge.
 	var good []string
 	for dst := range dsts {
+		fmt.Printf("Ref %s -> %s\n", dst, v.r.GetRef(dst))
+		if v.r.GetRef(dst) != "" {
+			dst = v.r.GetRef(dst)
+		}
 		n := v.r.GetNode(dst)
 		count := 0
-		for _, e := range n.Out {
-			if v.backward[e.Commit] == dst {
+		for _, e := range getIn(n) {
+			target := forward[e.Commit]
+			if r := v.r.GetRef(target); r != "" {
+				target = r
+			}
+			fmt.Printf("Checking %v vs %v\n", target, dst)
+			if target == dst {
 				count++
 			}
 		}
-		if count != len(n.Out) {
+		if count != len(getIn(n)) {
 			continue
 		}
 		good = append(good, dst)
 	}
-	fmt.Printf("Reachable: %v\n", good)
+
 	return good
 }
 
