@@ -105,12 +105,19 @@ func TestVerge(t *testing.T) {
 		r := graph.MakeFakeRepo()
 		c0 := &graph.Commit{
 			Deps:     nil,
-			EdgeRefs: []graph.EdgeRef{{Src: 0, Dst: -1}},
+			EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
 			Contents: []graph.NewContent{
 				{
-					Path:    "foo.txt",
+					Path: "foo.txt",
+					Form: graph.FormFileSrc,
+				},
+				{
 					Form:    graph.FormText,
 					Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
+				},
+				{
+					Path: "foo.txt",
+					Form: graph.FormFileSnk,
 				},
 			},
 		}
@@ -176,40 +183,17 @@ func TestVerge(t *testing.T) {
 		// t.Errorf("C3: %s\n", c3.Hash())
 		{
 			for h, n := range r.Nodes {
-				fmt.Printf("%s\n", h)
+				fmt.Printf("%q %q %q\n", h, n.Head, n.Tail)
 				fmt.Printf("%s\n", bytes.Join(r.GetContent(n.Content), []byte("\n")))
 				fmt.Printf("\n")
 			}
 		}
 		v := graph.MakeVerge(r, headFrontier{}, "foo.txt")
-		// t.Errorf("Next: %v\n", v.Next())
-		n := v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		// t.Errorf("Next: %v\n", v.Next())
-		// t.Errorf("CONFLICTS: %v\n", v.Conflicts())
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		// t.Errorf("Next: %v\n", v.Next())
-		// t.Errorf("CONFLICTS: %v\n", v.Conflicts())
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		// t.Errorf("Next: %v\n", v.Next())
-		// t.Errorf("CONFLICTS: %v\n", v.Conflicts())
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
-		n = v.Next()[0]
-		v.Advance(n)
-		So(v.Prev(), ShouldContain, n)
+		// Should be able to advance until we get to the snk node.
+		for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
+			v.Advance(n)
+			So(v.Prev(), ShouldContain, n)
+		}
 	})
 }
 
@@ -228,12 +212,19 @@ func TestApplyCommits(t *testing.T) {
 		content0 := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "")
 		c0 := &graph.Commit{
 			Deps:     nil,
-			EdgeRefs: []graph.EdgeRef{{Src: 0, Dst: -1}},
+			EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
 			Contents: []graph.NewContent{
 				{
-					Path:    "foo.txt",
+					Path: "foo.txt",
+					Form: graph.FormFileSrc,
+				},
+				{
 					Form:    graph.FormText,
 					Content: content0,
+				},
+				{
+					Path: "foo.txt",
+					Form: graph.FormFileSnk,
 				},
 			},
 		}
@@ -248,11 +239,8 @@ func TestApplyCommits(t *testing.T) {
 		content1 := stringsToContent("BRAVO", "CHARLIE")
 		// This commit capitalizes the lines with 'bravo' and 'charlie'
 		c1 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
-				{Src: 0, Dst: 2},
-				{Src: 2, Dst: 1},
-			},
+			Deps:     []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{{0, 2}, {2, 1}},
 			NodeRefs: []graph.NodeRef{
 				{Node: "src:foo.txt", Depth: 2}, // 'alpha'
 				{Node: "src:foo.txt", Depth: 5}, // 'delta'
@@ -280,10 +268,8 @@ func TestApplyCommits(t *testing.T) {
 		// This should be the node with the capitalized text
 		// r.Nodes["src:foo.txt"].Out[1].Node
 		c2 := &graph.Commit{
-			Deps: []string{c0.Hash(), c1.Hash()},
-			EdgeRefs: []graph.EdgeRef{
-				{Src: 0, Dst: 1},
-			},
+			Deps:     []string{c0.Hash(), c1.Hash()},
+			EdgeRefs: []graph.EdgeRef{{0, 1}},
 			NodeRefs: []graph.NodeRef{
 				{
 					Node:  r.Nodes[r.Nodes["src:foo.txt"].Out[0].Node].Out[1].Node,

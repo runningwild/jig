@@ -80,7 +80,7 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	}
 
 	// For simplicity we'll just special case splitting at the very beginning of a file.
-	if n.Form == FormFile && depth == 1 {
+	if n.Form == FormFileSrc && depth == 1 {
 		return n.Tail, n.Out[0].Node, nil
 	}
 
@@ -166,7 +166,8 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	}
 
 	first := true
-	for n.Out[len(n.Out)-1].Node != "1" {
+	snk := fmt.Sprintf("snk:%s", path)
+	for n.Out[len(n.Out)-1].Node != snk {
 		// NEXT: Use the Frontier to decide how to traverse the edges.
 		// Go through all of the out edges and consider only the ones in the Frontier, then choose
 		// the one that is not dependent on any in that set.
@@ -336,19 +337,27 @@ func Apply(r Repo, c *Commit) error {
 
 	// Now go back and get the hashes.  We have to do all of the splitting first because we might
 	// split some nodes multiple times before we're done.
-	// for _, nr := range c.NodeRefs {
-	// 	_, head, err := SplitNode(r, nr.Node, nr.Depth)
-	// 	if err != nil {
-	// 		return fmt.Errorf("error splitting node: %v", err)
-	// 	}
-	// 	nodeHeads = append(nodeHeads, head)
-	// 	nodeTails = append(nodeTails, r.GetNode(head).Tail)
-	// }
 
 	// Create all of the new nodes added by this commit.
 	var newNodes []string
 	for i, nc := range c.Contents {
-		// todo: set head and tail
+		fmt.Printf("WOrking on %d %v\n", i, nc)
+		if nc.Form == FormFileSrc || nc.Form == FormFileSnk {
+			mode := "src"
+			if nc.Form == FormFileSnk {
+				mode = "snk"
+			}
+			n := &Node{
+				Head:  fmt.Sprintf("%s:%s", mode, nc.Path),
+				Form:  nc.Form,
+				Count: 1,
+			}
+			n.Tail = n.Head
+			r.PutNode(n)
+			newNodes = append(newNodes, n.Head)
+			fmt.Printf("added %v\n", n)
+			continue
+		}
 		n := &Node{
 			Form:    nc.Form,
 			Content: hashContent(nc.Content), // Content hash
@@ -356,51 +365,32 @@ func Apply(r Repo, c *Commit) error {
 		}
 
 		var prev string
-		if nc.Path != "" {
-			prev = "src:" + nc.Path
-			n.In = append(n.In, Edge{Commit: commitHash, Node: prev, Primary: true})
-		} else {
-			// We need to know the previous node's hash to calculate this node's hash.  If this is a
-			// new file then it's just the path, otherwise we need to look through the edges to find
-			// which one is pointing to this node, the other end of that edge will be the previous node.
-			for _, e := range c.EdgeRefs {
-				if e.Dst != len(c.NodeRefs)+i {
-					continue
-				}
-				if e.Src >= len(c.NodeRefs) {
-					// There is no reason for an edge to connect two new nodes, it might as well be
-					// a single node, so rather than tracing backward to the previously known node
-					// we can just bail here.
-					// TODO: This needs to be in validation, we shouldn't be bailing here.
-					return fmt.Errorf("malformed commit: edge connected two new nodes")
-				}
-				prevNode := r.GetNode(c.NodeRefs[e.Src].Node)
-				// if prevNode != nil {
-				// 	// TODO: This check should be part of validation.
-				// 	return fmt.Errorf("commit referred to %s which we don't have", c.NodeRefs[e.Src].Node)
-				// }
+		// We need to know the previous node's hash to calculate this node's hash.  If this is a
+		// new file then it's just the path, otherwise we need to look through the edges to find
+		// which one is pointing to this node, the other end of that edge will be the previous node.
+		for _, e := range c.EdgeRefs {
+			if e.Dst != len(c.NodeRefs)+i {
+				continue
+			}
+			var prevNode *Node
+			if e.Src < len(c.NodeRefs) {
+				prevNode = r.GetNode(c.NodeRefs[e.Src].Node)
 				prev = prevNode.Tail
+			} else {
+				// The only reason to have an edge to a NodeRef is if the NodeRef is a src or
+				// snk node, otherwise the contents should have just been combined into a single
+				// node.  Since we're looking at incoming edges, the only valid form is FormFileSrc.
+				content := c.Contents[e.Src-len(c.NodeRefs)]
+				if content.Form != FormFileSrc {
+					return fmt.Errorf("malformed commit: edge connected something other than FormFile or FormFileSrc to another FormFile")
+				}
+				prev = fmt.Sprintf("src:%s", content.Path)
 			}
 		}
 		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
 		r.PutNode(n)
-		if nc.Path != "" {
-			fileHash := "src:" + nc.Path
-			r.PutNode(&Node{
-				Head:    fileHash,
-				Tail:    fileHash,
-				Count:   1,
-				Form:    FormFile,
-				Out:     []Edge{{Commit: commitHash, Node: n.Head, Primary: true}},
-				OutDeps: [][]int{{}},
-			})
-			r.PutRef(fileHash, fileHash)
-		} else {
-			r.PutRef(n.Tail, n.Head)
-		}
+		r.PutRef(n.Tail, n.Head)
 		newNodes = append(newNodes, n.Head)
-		// nodeHeads = append(nodeHeads, n.Head)
-		// nodeTails = append(nodeTails, n.Tail)
 	}
 
 	// TODO: We might want transactions to be recursive, so that we can split nodes here and, if the
@@ -433,8 +423,6 @@ func Apply(r Repo, c *Commit) error {
 		}
 
 		switch {
-		case e.Dst == -1:
-			dstHead = "1"
 		case e.Dst == -2:
 			panic("not implemented yet")
 		case e.Dst >= 0 && e.Dst < len(c.NodeRefs):
@@ -450,7 +438,7 @@ func Apply(r Repo, c *Commit) error {
 		default:
 			panic(fmt.Sprintf("what the beans?  got dst %d", e.Dst))
 		}
-
+		fmt.Printf("Out: %q -> %q\n", srcNode.Tail, dstHead)
 		srcNode.Out = append(srcNode.Out, Edge{
 			Commit:  commitHash,
 			Node:    dstHead,
@@ -466,6 +454,7 @@ func Apply(r Repo, c *Commit) error {
 		r.PutNode(srcNode)
 
 		if dstNode != nil {
+			fmt.Printf("In: %q <- %q\n", srcNode.Tail, dstNode.Head)
 			dstNode.In = append(dstNode.In, Edge{
 				Commit:  commitHash,
 				Node:    srcNode.Tail,
@@ -481,7 +470,7 @@ func Apply(r Repo, c *Commit) error {
 
 type EdgeRef struct {
 	Src, Dst int // indexes into NodeRefs and Contents
-	// Dst == -1: "1", this is an EOF
+	// Now we specify the snk node explicitly  // Dst == -1: "1", this is an EOF
 	// Dst == -2: "2", this file was deleted (must come from a ref to a file)
 }
 
@@ -642,8 +631,9 @@ const (
 	// have a zero-length line at the end.
 	FormText = iota
 
-	// Used for the first node in a file only.
-	FormFile
+	// Used for the first and last nodes in a file only.
+	FormFileSrc
+	FormFileSnk
 
 	// FormBinary is a binary file.  TODO: Need to define the chunking algorithm
 //	FormBinary

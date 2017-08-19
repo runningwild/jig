@@ -193,23 +193,24 @@ func (v *Verge) Prev() []string {
 	for _, dst := range v.backward {
 		dsts[dst] = true
 	}
+	fmt.Printf("Nodes on the verge: %v\n", dsts)
 
 	// Acceptable nodes are ones whose inputs edges are all on the Verge.
 	var good []string
 	for dst := range dsts {
 		n := v.r.GetNode(dst)
 		count := 0
-		for _, e := range n.In {
+		for _, e := range n.Out {
 			if v.backward[e.Commit] == dst {
 				count++
 			}
 		}
-		if count != len(n.In) {
+		if count != len(n.Out) {
 			continue
 		}
 		good = append(good, dst)
 	}
-
+	fmt.Printf("Reachable: %v\n", good)
 	return good
 }
 
