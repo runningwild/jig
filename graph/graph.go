@@ -1,13 +1,10 @@
 package graph
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"io"
-
-	"os"
-	"strings"
 
 	skein512 "github.com/runningwild/skein/hash/512"
 )
@@ -159,7 +156,7 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 }
 
 func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
-	n := r.GetNode("file:" + path)
+	n := r.GetNode("src:" + path)
 	if n == nil {
 		return fmt.Errorf("file not found")
 	}
@@ -195,106 +192,110 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	return nil
 }
 
-func Main() {
-	r := makeFakeRepo()
+// func Main() {
+// 	r := MakeFakeRepo()
 
-	content := bytes.Split([]byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n")), []byte("\n"))
-	c0 := &Commit{
-		Deps:     nil,
-		EdgeRefs: []EdgeRef{{Src: 0, Dst: -1}},
-		Contents: []NewContent{
-			{
-				Path:    "foo.txt",
-				Form:    FormText,
-				Content: content,
-			},
-		},
-	}
-	if err := Apply(r, c0); err != nil {
-		fmt.Printf("failed to apply first commit: %v", err)
-		return
-	}
+// 	content := bytes.Split([]byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n")), []byte("\n"))
+// 	c0 := &Commit{
+// 		Deps:     nil,
+// 		EdgeRefs: []EdgeRef{{Src: 0, Dst: -1}},
+// 		Contents: []NewContent{
+// 			{
+// 				Path:    "foo.txt",
+// 				Form:    FormText,
+// 				Content: content,
+// 			},
+// 		},
+// 	}
+// 	if err := Apply(r, c0); err != nil {
+// 		fmt.Printf("failed to apply first commit: %v", err)
+// 		return
+// 	}
 
-	content2 := bytes.Split([]byte(strings.Join([]string{"BRAVO", "CHARLIE"}, "\n")), []byte("\n"))
-	// for _, n := range r.nodes {
-	// 	fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-	// 	fmt.Printf("Out: %v\n", n.Out)
-	// 	fmt.Printf("In: %v\n", n.In)
-	// 	fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-	// }
-	fmt.Printf("Printing 'foo.txt'----------\n")
-	PrintFile(r, "foo.txt", nil, os.Stdout)
-	fmt.Printf("----------------------------\n\n\n")
+// 	content2 := bytes.Split([]byte(strings.Join([]string{"BRAVO", "CHARLIE"}, "\n")), []byte("\n"))
+// 	// for _, n := range r.nodes {
+// 	// 	fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+// 	// 	fmt.Printf("Out: %v\n", n.Out)
+// 	// 	fmt.Printf("In: %v\n", n.In)
+// 	// 	fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+// 	// }
+// 	fmt.Printf("Printing 'foo.txt'----------\n")
+// 	PrintFile(r, "foo.txt", nil, os.Stdout)
+// 	fmt.Printf("----------------------------\n\n\n")
 
-	// This commit capitalizes the lines with 'bravo' and 'charlie'
-	c1 := &Commit{
-		Deps: []string{c0.Hash()},
-		EdgeRefs: []EdgeRef{
-			{Src: 0, Dst: 2},
-			{Src: 2, Dst: 1},
-		},
-		NodeRefs: []NodeRef{
-			{Node: "file:foo.txt", Depth: 2}, // 'alpha'
-			{Node: "file:foo.txt", Depth: 5}, // 'delta'
-		},
-		Contents: []NewContent{
-			{Content: content2},
-		},
-	}
-	fmt.Printf("Applying commit %q...\n", c1.Hash())
-	if err := Apply(r, c1); err != nil {
-		fmt.Printf("Failed to apply commit: %v", err)
-		return
-	}
-	fmt.Printf("Printing 'foo.txt'----------\n")
-	PrintFile(r, "foo.txt", nil, os.Stdout)
-	fmt.Printf("----------------------------\n")
+// 	// This commit capitalizes the lines with 'bravo' and 'charlie'
+// 	c1 := &Commit{
+// 		Deps: []string{c0.Hash()},
+// 		EdgeRefs: []EdgeRef{
+// 			{Src: 0, Dst: 2},
+// 			{Src: 2, Dst: 1},
+// 		},
+// 		NodeRefs: []NodeRef{
+// 			{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+// 			{Node: "src:foo.txt", Depth: 5}, // 'delta'
+// 		},
+// 		Contents: []NewContent{
+// 			{Content: content2},
+// 		},
+// 	}
+// 	fmt.Printf("Applying commit %q...\n", c1.Hash())
+// 	if err := Apply(r, c1); err != nil {
+// 		fmt.Printf("Failed to apply commit: %v", err)
+// 		return
+// 	}
+// 	fmt.Printf("Printing 'foo.txt'----------\n")
+// 	PrintFile(r, "foo.txt", nil, os.Stdout)
+// 	fmt.Printf("----------------------------\n")
 
-	fmt.Printf("Starting with %q\n", "file:foo.txt")
-	fmt.Printf("Now to %q\n", r.nodes["file:foo.txt"].Out[0].Node)
-	fmt.Printf("Now to %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node)
-	fmt.Printf(" on commit %q\n", r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Commit)
+// 	fmt.Printf("Starting with %q\n", "src:foo.txt")
+// 	fmt.Printf("Now to %q\n", r.nodes["src:foo.txt"].Out[0].Node)
+// 	fmt.Printf("Now to %q\n", r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Node)
+// 	fmt.Printf(" on commit %q\n", r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Commit)
 
-	// This should be the node with the capitalized text
-	// r.nodes["file:foo.txt"].Out[1].Node
-	c2 := &Commit{
-		Deps: []string{c0.Hash(), c1.Hash()},
-		EdgeRefs: []EdgeRef{
-			{Src: 0, Dst: 1},
-		},
-		NodeRefs: []NodeRef{
-			{
-				Node:  r.nodes[r.nodes["file:foo.txt"].Out[0].Node].Out[1].Node,
-				Depth: 2,
-			},
-			{
-				Node:  "file:foo.txt",
-				Depth: 6,
-			},
-		},
-		Contents: nil,
-	}
+// 	// This should be the node with the capitalized text
+// 	// r.nodes["src:foo.txt"].Out[1].Node
+// 	c2 := &Commit{
+// 		Deps: []string{c0.Hash(), c1.Hash()},
+// 		EdgeRefs: []EdgeRef{
+// 			{Src: 0, Dst: 1},
+// 		},
+// 		NodeRefs: []NodeRef{
+// 			{
+// 				Node:  r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Node,
+// 				Depth: 2,
+// 			},
+// 			{
+// 				Node:  "src:foo.txt",
+// 				Depth: 6,
+// 			},
+// 		},
+// 		Contents: nil,
+// 	}
 
-	for _, n := range r.nodes {
-		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-		fmt.Printf("Out: %v\n", n.Out)
-		fmt.Printf("In: %v\n", n.In)
-		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-		fmt.Printf("\n\n\n\n\n")
-	}
+// 	for _, n := range r.nodes {
+// 		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
+// 		fmt.Printf("Out: %v\n", n.Out)
+// 		fmt.Printf("In: %v\n", n.In)
+// 		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
+// 		fmt.Printf("\n\n\n\n\n")
+// 	}
 
-	fmt.Printf("Applying a commit...\n")
-	if err := Apply(r, c2); err != nil {
-		fmt.Printf("Failed to apply commit: %v", err)
-		return
-	}
-	fmt.Printf("Printing 'foo.txt'----------\n")
-	PrintFile(r, "foo.txt", nil, os.Stdout)
-	fmt.Printf("----------------------------\n")
+// 	fmt.Printf("Applying a commit...\n")
+// 	if err := Apply(r, c2); err != nil {
+// 		fmt.Printf("Failed to apply commit: %v", err)
+// 		return
+// 	}
+// 	fmt.Printf("Printing 'foo.txt'----------\n")
+// 	PrintFile(r, "foo.txt", nil, os.Stdout)
+// 	fmt.Printf("----------------------------\n")
+// }
+
+func jigStandardHasher() hash.Hash {
+	return skein512.NewHash512(24)
 }
 
 func hashContent(content [][]byte) string {
-	h := skein512.NewHash512(128)
+	h := jigStandardHasher()
 	for _, line := range content {
 		length := uint32(len(line))
 		h.Write([]byte{byte(length), byte(length >> 8), byte(length >> 16), byte(length >> 24)})
@@ -356,7 +357,7 @@ func Apply(r Repo, c *Commit) error {
 
 		var prev string
 		if nc.Path != "" {
-			prev = "file:" + nc.Path
+			prev = "src:" + nc.Path
 			n.In = append(n.In, Edge{Commit: commitHash, Node: prev, Primary: true})
 		} else {
 			// We need to know the previous node's hash to calculate this node's hash.  If this is a
@@ -384,7 +385,7 @@ func Apply(r Repo, c *Commit) error {
 		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
 		r.PutNode(n)
 		if nc.Path != "" {
-			fileHash := "file:" + nc.Path
+			fileHash := "src:" + nc.Path
 			r.PutNode(&Node{
 				Head:    fileHash,
 				Tail:    fileHash,
@@ -426,7 +427,7 @@ func Apply(r Repo, c *Commit) error {
 				return fmt.Errorf("lame split error: %v", err)
 			}
 			srcNode = r.GetNode(r.GetRef(tail))
-			fmt.Printf("%q -> %q -> %v\n", tail, r.GetRef(tail), srcNode)
+			// fmt.Printf("%q -> %q -> %v\n", tail, r.GetRef(tail), srcNode)
 		} else {
 			srcNode = r.GetNode(newNodes[e.Src-len(c.NodeRefs)])
 		}
@@ -505,7 +506,7 @@ type Commit struct {
 }
 
 func (c *Commit) Hash() string {
-	h := skein512.NewHash512(128)
+	h := jigStandardHasher()
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.Deps)))
 	for _, d := range c.Deps {
@@ -573,7 +574,7 @@ func CalculateNodeHashes(commit, prev string, form Form, content [][]byte) (head
 		panic("unknown form")
 	}
 	for _, line := range content {
-		h := skein512.NewHash512(128)
+		h := jigStandardHasher()
 		binary.Write(h, binary.LittleEndian, uint32(len(commit)))
 		h.Write([]byte(commit))
 		binary.Write(h, binary.LittleEndian, uint32(len(prev)))
@@ -617,7 +618,7 @@ type Edge struct {
 }
 
 func (e *Edge) Hash() string {
-	h := skein512.NewHash512(128)
+	h := jigStandardHasher()
 
 	binary.Write(h, binary.LittleEndian, uint32(len(e.Commit)))
 	h.Write([]byte(e.Commit))
@@ -651,64 +652,64 @@ const (
 ////// omgggggg
 
 type testRepo struct {
-	nodes        map[string]*Node
-	commits      map[string]*Commit
-	content      map[string][][]byte
-	refs         map[string]string
-	transactions int
+	Nodes        map[string]*Node
+	Commits      map[string]*Commit
+	Content      map[string][][]byte
+	Refs         map[string]string
+	Transactions int
 }
 
-func makeFakeRepo() *testRepo {
+func MakeFakeRepo() *testRepo {
 	return &testRepo{
-		nodes:   make(map[string]*Node),
-		commits: make(map[string]*Commit),
-		content: make(map[string][][]byte),
-		refs:    make(map[string]string),
+		Nodes:   make(map[string]*Node),
+		Commits: make(map[string]*Commit),
+		Content: make(map[string][][]byte),
+		Refs:    make(map[string]string),
 	}
 }
 
 func (r *testRepo) GetRef(ptr string) string {
-	return r.refs[ptr]
+	return r.Refs[ptr]
 }
 func (r *testRepo) GetNode(nodeHash string) *Node {
-	return r.nodes[nodeHash]
+	return r.Nodes[nodeHash]
 }
 func (r *testRepo) GetCommit(commitHash string) *Commit {
-	return r.commits[commitHash]
+	return r.Commits[commitHash]
 }
 func (r *testRepo) GetContent(contentHash string) [][]byte {
-	return r.content[contentHash]
+	return r.Content[contentHash]
 }
 func (r *testRepo) StartTransaction() {
-	if r.transactions != 0 {
+	if r.Transactions != 0 {
 		panic("omg")
 	}
-	r.transactions = 1
+	r.Transactions = 1
 }
 func (r *testRepo) EndTransaction() error {
-	if r.transactions != 1 {
+	if r.Transactions != 1 {
 		panic("zomg")
 	}
-	r.transactions = 0
+	r.Transactions = 0
 	return nil
 }
 func (r *testRepo) PutRef(ptr, val string) {
-	r.refs[ptr] = val
+	r.Refs[ptr] = val
 }
 func (r *testRepo) PutNode(n *Node) {
-	r.nodes[n.Head] = n
+	r.Nodes[n.Head] = n
 }
 func (r *testRepo) PutCommit(c *Commit) {
-	r.commits[c.Hash()] = c
+	r.Commits[c.Hash()] = c
 }
 func (r *testRepo) DeleteNode(nodeHash string) {
-	delete(r.nodes, nodeHash)
+	delete(r.Nodes, nodeHash)
 }
 func (r *testRepo) PutContent(content [][]byte) string {
 	hash := hashContent(content)
-	r.content[hash] = content
+	r.Content[hash] = content
 	return hash
 }
 func (r *testRepo) DeleteContent(contentHash string) {
-	delete(r.content, contentHash)
+	delete(r.Content, contentHash)
 }
