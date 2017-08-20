@@ -155,62 +155,109 @@ func TestVerge(t *testing.T) {
 				{Content: stringsToContent("Charles", "Deltoid")},
 			},
 		}
-		if false {
-			graph.Apply(r, c2)
-		}
+		graph.Apply(r, c2)
 
-		// This commit replaces 'charlie' and 'delta'
+		// This commit replaces resolves the conflict between c1 and c2.
 		c3 := &graph.Commit{
-			Deps: []string{c1.Hash(), c2.Hash()},
+			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash()},
 			EdgeRefs: []graph.EdgeRef{
 				{Src: 0, Dst: 2},
 				{Src: 2, Dst: 1},
 			},
 			NodeRefs: []graph.NodeRef{
-				{Node: "src:foo.txt", Depth: 2}, // 'charlie'
+				{Node: "src:foo.txt", Depth: 2}, // 'alpha'
 				{Node: "src:foo.txt", Depth: 6}, // 'echo'
 			},
 			Contents: []graph.NewContent{
 				{Content: stringsToContent("all", "your", "base", "are", "belong", "to", "us")},
 			},
 		}
-		if false {
-			graph.Apply(r, c3)
-		}
-		// t.Errorf("C0: %s\n", c0.Hash())
-		// t.Errorf("C1: %s\n", c1.Hash())
-		// t.Errorf("C2: %s\n", c2.Hash())
-		// t.Errorf("C3: %s\n", c3.Hash())
-		{
-			for h, n := range r.Nodes {
-				fmt.Printf("%q %q %q\n", h, n.Head, n.Tail)
-				fmt.Printf("%s\n", bytes.Join(r.GetContent(n.Content), []byte("\n")))
-				fmt.Printf("\n")
+		graph.Apply(r, c3)
+		fmt.Printf("C0: %v\n", c0.Hash())
+		fmt.Printf("C1: %v\n", c1.Hash())
+		fmt.Printf("C2: %v\n", c2.Hash())
+		fmt.Printf("C3: %v\n", c3.Hash())
+		Convey("if the frontier doesn't see conflicts then the verge shouldn't see conflicts", func() {
+			v := graph.MakeVerge(r, explicitFrontier(c0, c1), "foo.txt")
+			// Should be able to advance until we get to the snk node.
+			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
+				v.Advance(n)
+				fmt.Printf("prev: %v\n", v.Prev())
+				So(v.Prev(), ShouldContain, n)
+				So(len(v.Next()), ShouldBeGreaterThan, 0)
+				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
-		}
-		v := graph.MakeVerge(r, headFrontier{}, "foo.txt")
 
-		// Should be able to advance until we get to the snk node.
-		for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
-			v.Advance(n)
-			So(v.Prev(), ShouldContain, n)
-			fmt.Printf("BING\n")
-			So(len(v.Next()), ShouldBeGreaterThan, 0)
-		}
+			// Should be able to retract until we get to the snk node.
+			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
+				v.Retract(n)
+				So(v.Next(), ShouldContain, n)
+				So(len(v.Prev()), ShouldBeGreaterThan, 0)
+				So(len(v.Conflicts()), ShouldBeZeroValue)
+			}
+		})
 
-		// Should be able to retract until we get to the snk node.
-		for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
-			v.Retract(n)
-			So(v.Next(), ShouldContain, n)
-			fmt.Printf("BING\n")
-			So(len(v.Prev()), ShouldBeGreaterThan, 0)
-		}
+		Convey("if the frontier can see conflicts then the verge should see conflicts", func() {
+			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
+			foundConflict := false
+			// Should be able to advance until we get to the snk node.
+			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
+				v.Advance(n)
+				fmt.Printf("prev: %v\n", v.Prev())
+				So(v.Prev(), ShouldContain, n)
+				So(len(v.Next()), ShouldBeGreaterThan, 0)
+				if len(v.Conflicts()) > 0 {
+					foundConflict = true
+				}
+			}
+			So(foundConflict, ShouldBeTrue)
+
+			foundConflict = false
+			// Should be able to retract until we get to the snk node.
+			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
+				v.Retract(n)
+				So(v.Next(), ShouldContain, n)
+				So(len(v.Prev()), ShouldBeGreaterThan, 0)
+				if len(v.Conflicts()) > 0 {
+					foundConflict = true
+				}
+			}
+			So(foundConflict, ShouldBeTrue)
+		})
+
+		Convey("if the frontier can see a commit that resolves a conflict then it shouldn't see the conflict", func() {
+			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3), "foo.txt")
+			// Should be able to advance until we get to the snk node.
+			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
+				v.Advance(n)
+				fmt.Printf("prev: %v\n", v.Prev())
+				So(v.Prev(), ShouldContain, n)
+				So(len(v.Next()), ShouldBeGreaterThan, 0)
+				So(len(v.Conflicts()), ShouldBeZeroValue)
+			}
+
+			// Should be able to retract until we get to the snk node.
+			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
+				v.Retract(n)
+				So(v.Next(), ShouldContain, n)
+				So(len(v.Prev()), ShouldBeGreaterThan, 0)
+				So(len(v.Conflicts()), ShouldBeZeroValue)
+			}
+		})
 	})
 }
 
-type headFrontier struct{}
+type simpleFrontier map[string]bool
 
-func (headFrontier) Observes(string) bool { return true }
+func (s simpleFrontier) Observes(c string) bool { return s[c] }
+
+func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
+	s := make(simpleFrontier)
+	for _, c := range commits {
+		s[c.Hash()] = true
+	}
+	return s
+}
 
 // TODO: Need to test the following kinds of invalid commits at the very least:
 // - Edges that create cycles.

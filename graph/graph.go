@@ -438,7 +438,7 @@ func Apply(r Repo, c *Commit) error {
 		default:
 			panic(fmt.Sprintf("what the beans?  got dst %d", e.Dst))
 		}
-		fmt.Printf("Out: %q -> %q\n", srcNode.Tail, dstHead)
+		// fmt.Printf("Out: %q -> %q\n", srcNode.Tail, dstHead)
 		srcNode.Out = append(srcNode.Out, Edge{
 			Commit:  commitHash,
 			Node:    dstHead,
@@ -454,7 +454,7 @@ func Apply(r Repo, c *Commit) error {
 		r.PutNode(srcNode)
 
 		if dstNode != nil {
-			fmt.Printf("In: %q <- %q\n", srcNode.Tail, dstNode.Head)
+			// fmt.Printf("In: %q <- %q\n", srcNode.Tail, dstNode.Head)
 			dstNode.In = append(dstNode.In, Edge{
 				Commit:  commitHash,
 				Node:    srcNode.Tail,
