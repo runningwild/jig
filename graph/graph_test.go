@@ -123,7 +123,6 @@ func TestVerge(t *testing.T) {
 		}
 		graph.Apply(r, c0)
 
-		// This commit capitalizes the lines with 'bravo' and 'charlie'
 		c1 := &graph.Commit{
 			Deps: []string{c0.Hash()},
 			EdgeRefs: []graph.EdgeRef{
@@ -131,11 +130,11 @@ func TestVerge(t *testing.T) {
 				{Src: 2, Dst: 1},
 			},
 			NodeRefs: []graph.NodeRef{
-				{Node: "src:foo.txt", Depth: 2}, // 'alpha'
-				{Node: "src:foo.txt", Depth: 5}, // 'delta'
+				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				{Node: "src:foo.txt", Depth: 9}, // 'hotel'
 			},
 			Contents: []graph.NewContent{
-				{Content: stringsToContent("BRAVO", "CHARLIE")},
+				{Content: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF")},
 			},
 		}
 		graph.Apply(r, c1)
@@ -148,11 +147,11 @@ func TestVerge(t *testing.T) {
 				{Src: 2, Dst: 1},
 			},
 			NodeRefs: []graph.NodeRef{
-				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				{Node: "src:foo.txt", Depth: 5}, // 'delta'
 				{Node: "src:foo.txt", Depth: 6}, // 'echo'
 			},
 			Contents: []graph.NewContent{
-				{Content: stringsToContent("Charles", "Deltoid")},
+				{Content: stringsToContent("Buttons", "the", "buttonsball")},
 			},
 		}
 		graph.Apply(r, c2)
@@ -165,18 +164,15 @@ func TestVerge(t *testing.T) {
 				{Src: 2, Dst: 1},
 			},
 			NodeRefs: []graph.NodeRef{
-				{Node: "src:foo.txt", Depth: 2}, // 'alpha'
-				{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				{Node: "src:foo.txt", Depth: 3},  // 'bravo'
+				{Node: "src:foo.txt", Depth: 10}, // 'india'
 			},
 			Contents: []graph.NewContent{
 				{Content: stringsToContent("all", "your", "base", "are", "belong", "to", "us")},
 			},
 		}
 		graph.Apply(r, c3)
-		fmt.Printf("C0: %v\n", c0.Hash())
-		fmt.Printf("C1: %v\n", c1.Hash())
-		fmt.Printf("C2: %v\n", c2.Hash())
-		fmt.Printf("C3: %v\n", c3.Hash())
+
 		Convey("if the frontier doesn't see conflicts then the verge shouldn't see conflicts", func() {
 			v := graph.MakeVerge(r, explicitFrontier(c0, c1), "foo.txt")
 			// Should be able to advance until we get to the snk node.
@@ -220,6 +216,9 @@ func TestVerge(t *testing.T) {
 				So(len(v.Prev()), ShouldBeGreaterThan, 0)
 				if len(v.Conflicts()) > 0 {
 					foundConflict = true
+					So(len(v.Conflicts()), ShouldEqual, 2)
+					So(v.Conflicts(), ShouldContain, c1.Hash())
+					So(v.Conflicts(), ShouldContain, c2.Hash())
 				}
 			}
 			So(foundConflict, ShouldBeTrue)
@@ -359,75 +358,3 @@ func TestApplyCommits(t *testing.T) {
 		fmt.Printf("----------------------------\n")
 	})
 }
-
-// type testRepo struct {
-// 	nodes        map[string]*graph.Node
-// 	content      map[string][][]byte
-// 	refs         map[string]string
-// 	commits      map[string]*graph.Commit
-// 	transactions int
-// }
-
-// func makeFakeRepo() *testRepo {
-// 	return &testRepo{
-// 		nodes:   make(map[string]*graph.Node),
-// 		content: make(map[string][][]byte),
-// 		refs:    make(map[string]string),
-// 		commits: make(map[string]*graph.Commit),
-// 	}
-// }
-
-// func (r *testRepo) GetRef(ptr string) string {
-// 	return r.refs[ptr]
-// }
-// func (r *testRepo) GetNode(nodeHash string) *graph.Node {
-// 	return r.Nodes[nodeHash]
-// }
-// func (r *testRepo) GetCommit(commitHash string) *graph.Commit {
-// 	return r.commits[commitHash]
-// }
-// func (r *testRepo) GetContent(contentHash string) [][]byte {
-// 	return r.content[contentHash]
-// }
-// func (r *testRepo) StartTransaction() {
-// 	if r.transactions != 0 {
-// 		panic("omg")
-// 	}
-// 	r.transactions = 1
-// }
-// func (r *testRepo) EndTransaction() error {
-// 	if r.transactions != 1 {
-// 		panic("zomg")
-// 	}
-// 	r.transactions = 0
-// 	return nil
-// }
-// func (r *testRepo) PutRef(ptr, val string) {
-// 	r.refs[ptr] = val
-// }
-// func (r *testRepo) PutNode(n *graph.Node) {
-// 	r.Nodes[n.Head] = n
-// }
-// func (r *testRepo) PutCommit(c *graph.Commit) {
-// 	r.commits[c.Hash()] = c
-// }
-// func (r *testRepo) DeleteNode(nodeHash string) {
-// 	delete(r.Nodes, nodeHash)
-// }
-// func (r *testRepo) PutContent(content [][]byte) string {
-// 	hash := hashContent(content)
-// 	r.content[hash] = content
-// 	return hash
-// }
-// func hashContent(content [][]byte) string {
-// 	h := skein512.NewHash512(128)
-// 	for _, line := range content {
-// 		length := uint32(len(line))
-// 		h.Write([]byte{byte(length), byte(length >> 8), byte(length >> 16), byte(length >> 24)})
-// 		h.Write(line)
-// 	}
-// 	return fmt.Sprintf("%x", h.Sum(nil))
-// }
-// func (r *testRepo) DeleteContent(contentHash string) {
-// 	delete(r.content, contentHash)
-// }

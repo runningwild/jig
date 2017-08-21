@@ -41,7 +41,6 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 		v.forward[e.Commit] = e.Node
 		c := r.GetCommit(e.Commit)
 		for _, dep := range c.Deps {
-			// v.deps.addEdge(e.Commit, dep)
 			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
 		}
@@ -49,34 +48,46 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 	return v
 }
 
+// Advance advances the verge past node.  It panics if node is not a valid verge to advance past.
 func (v *Verge) Advance(node string) {
+	v.move(node, v.forward, v.backward, func(n *Node) []Edge { return n.Out }, func(n *Node) []Edge { return n.In })
+}
+
+// Retract retracts the verge past node.  It panics if node is not a valid verge to retract past.
+func (v *Verge) Retract(node string) {
+	v.move(node, v.backward, v.forward, func(n *Node) []Edge { return n.In }, func(n *Node) []Edge { return n.Out })
+}
+
+// move allows us to do Advance and Retract with the same code, all that's required is that we can
+// swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
+func (v *Verge) move(node string, forward, backward map[string]string, getForward, getBackward func(n *Node) []Edge) {
 	n := v.r.GetNode(node)
 	fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
-
-	for _, e := range n.In {
+	for _, e := range getBackward(n) {
 		if !v.f.Observes(e.Commit) {
-			fmt.Printf("Frontier doesn't observe edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 			continue
-		} else {
-			fmt.Printf("Frontier observes edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 		}
-		if v.forward[e.Commit] != node {
+
+		// Going through the reference is actually only necessary on a Retract.
+		check := forward[e.Commit]
+		if r := v.r.GetRef(check); r != "" {
+			check = r
+		}
+		if check != node {
 			panic("invalid advance node")
 		}
-		delete(v.forward, e.Commit)
-		delete(v.backward, e.Commit)
+
+		delete(forward, e.Commit)
+		delete(backward, e.Commit)
 		fmt.Printf("RDEPS remove node %s\n", e.Commit)
 		v.rdeps.removeNode(e.Commit)
 	}
-	for _, e := range n.Out {
+	for _, e := range getForward(n) {
 		if !v.f.Observes(e.Commit) {
-			fmt.Printf("Frontier doesn't observe edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 			continue
-		} else {
-			fmt.Printf("Frontier observes edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 		}
-		v.forward[e.Commit] = e.Node
-		v.backward[e.Commit] = node
+		forward[e.Commit] = e.Node
+		backward[e.Commit] = node
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
 			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
@@ -85,52 +96,13 @@ func (v *Verge) Advance(node string) {
 	}
 }
 
-func (v *Verge) Retract(node string) {
-	n := v.r.GetNode(node)
-	for _, e := range n.Out {
-		if !v.f.Observes(e.Commit) {
-			fmt.Printf("Frontier doesn't observe edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
-			continue
-		} else {
-			fmt.Printf("Frontier observes edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
-		}
-		check := v.backward[e.Commit]
-		if r := v.r.GetRef(check); r != "" {
-			check = r
-		}
-		if check != node {
-			panic("invalid advance node")
-		}
-		delete(v.backward, e.Commit)
-		delete(v.forward, e.Commit)
-		v.rdeps.removeNode(e.Commit)
-	}
-	for _, e := range n.In {
-		if !v.f.Observes(e.Commit) {
-			fmt.Printf("Frontier doesn't observe edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
-			continue
-		} else {
-			fmt.Printf("Frontier observes edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
-		}
-		v.backward[e.Commit] = e.Node
-		v.forward[e.Commit] = node
-		for _, dep := range v.r.GetCommit(e.Commit).Deps {
-			v.rdeps.addNode(e.Commit)
-			v.rdeps.addEdge(dep, e.Commit)
-		}
-	}
-	// fmt.Printf("rdeps after:\n%v\n", v.rdeps)
-	// fmt.Printf("Back: %v\n", v.backward)
-}
 func (v *Verge) nodeContent(node string) string {
 	if r := v.r.GetRef(node); r != "" {
 		node = r
 	}
-	// if v.r.GetNode(node) == nil {
-	// 	return fmt.Sprintf("%s is invalid", node)
-	// }
 	return string(bytes.Join(v.r.GetContent(v.r.GetNode(node).Content), []byte(".")))
 }
+
 func (v *Verge) state() {
 	var keys []string
 	for key := range v.forward {
@@ -163,16 +135,6 @@ func (v *Verge) Conflicts() []string {
 	fmt.Printf("Visible state: %v\n", visible)
 	// Find all commits that are not dominated by at least one other commit.
 	dominators := v.rdeps.dominators()
-	// var dominators []string
-	// fmt.Printf("rdeps: %v\n", v.rdeps)
-	// for k, v := range v.rdeps.edges {
-	// 	if len(v) == 0 {
-	// 		dominators = append(dominators, k)
-	// 	} else {
-	// 		fmt.Printf("%s is dominated by %v\n", k, v)
-	// 	}
-	// }
-	// fmt.Printf("dominators: %v\n", dominators)
 	if len(dominators) == 1 {
 		return nil
 	}
@@ -203,25 +165,10 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	// fmt.Printf("Looking through:\n")
-	// for _, key := range keys {
-	// 	var content string
-	// 	ns := forward[key]
-	// 	if r := v.r.GetRef(ns); r != "" {
-	// 		ns = r
-	// 	}
-	// 	n := v.r.GetNode(ns)
-	// 	if n != nil {
-	// 		content = string(bytes.Join(v.r.GetContent(n.Content), []byte(".")))
-	// 	}
-	// 	fmt.Printf("Commit %s -> Node %s: %s\n", key, forward[key], content)
-	// }
-	// fmt.Printf("done looking\n")
 
 	// Acceptable nodes are ones whose inputs edges are all on the Verge.
 	var good []string
 	for dst := range dsts {
-		// fmt.Printf("Ref %s -> %s\n", dst, v.r.GetRef(dst))
 		if v.r.GetRef(dst) != "" {
 			dst = v.r.GetRef(dst)
 		}
@@ -230,17 +177,13 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 		observable := 0
 		for _, e := range getIn(n) {
 			if !v.f.Observes(e.Commit) {
-				fmt.Printf("Frontier doesn't observe edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 				continue
-			} else {
-				fmt.Printf("Frontier observes edge from commit %s: %s (%s) -> %s (%s)\n", e.Commit, n.Head, v.nodeContent(n.Head), e.Node, v.nodeContent(e.Node))
 			}
 			observable++
 			target := forward[e.Commit]
 			if r := v.r.GetRef(target); r != "" {
 				target = r
 			}
-			// fmt.Printf("Checking %v vs %v\n", target, dst)
 			if target == dst {
 				count++
 			}
@@ -250,7 +193,6 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 		}
 		good = append(good, dst)
 	}
-
 	return good
 }
 
