@@ -168,10 +168,6 @@ func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	first := true
 	snk := fmt.Sprintf("snk:%s", path)
 	for n.Out[len(n.Out)-1].Node != snk {
-		// NEXT: Use the Frontier to decide how to traverse the edges.
-		// Go through all of the out edges and consider only the ones in the Frontier, then choose
-		// the one that is not dependent on any in that set.
-		// observe := make(map[string]bool)
 		prev := n.Out[len(n.Out)-1].Node
 		n = r.GetNode(n.Out[len(n.Out)-1].Node)
 		if n == nil {

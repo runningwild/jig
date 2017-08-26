@@ -3,6 +3,7 @@ package graph_test
 import (
 	"bytes"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -243,7 +244,166 @@ func TestVerge(t *testing.T) {
 				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
 		})
+
+		Convey("monkeys", func() {
+			// This commit replaces 'charlie' and 'delta', just like c2, but in all caps.
+			c2x := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("BUTTONS", "THE", "BUTTONSBALL")},
+				},
+			}
+			graph.Apply(r, c2x)
+
+			// Deletes 'hotel'
+			c4 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 9},  // 'hotel'
+					{Node: "src:foo.txt", Depth: 10}, // EOF
+				},
+			}
+			graph.Apply(r, c4)
+
+			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c2x, c4), "foo.txt")
+			var c colorGraph
+			allConflicts := make(map[string]bool)
+			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
+				v.Advance(n)
+				for _, c0 := range v.Conflicts() {
+					for _, c1 := range v.Conflicts() {
+						if c0 == c1 {
+							continue
+						}
+						fmt.Printf("Conflict: %v %v\n", c0, c1)
+						c.addEdge(c0, c1)
+						allConflicts[c0] = true
+						allConflicts[c1] = true
+					}
+				}
+			}
+			fmt.Printf("%v\n", c)
+			colors := c.getColors()
+
+			// Verify that c1, c2 and c2x are all mutually conflicted, and that c0 and c4 are not.
+			So(len(colors), ShouldEqual, 3)
+			So(len(colors[0]), ShouldEqual, 1)
+			So(allConflicts[colors[0]], ShouldBeTrue)
+			So(len(colors[1]), ShouldEqual, 1)
+			So(allConflicts[colors[1]], ShouldBeTrue)
+			So(len(colors[2]), ShouldEqual, 1)
+			So(allConflicts[colors[2]], ShouldBeTrue)
+			So(len(allConflicts), ShouldEqual, 3)
+
+			// NEXT: several steps to covering the full conflict:
+			// 1. Retract the verge until a single node is found that begins the conflict.
+			//    This requires tracking which commits are in conflict as specified in the doc.
+			// 2. Scan forward until the single node at which the conflict ends is found.
+			// 3. For every set of conflicting commits, track each pair that conflicts, then find a
+			//    coloring so we know how many different sets of commits need to be shown to the user.
+			//    This is NP-hard so don't knock your brains out.
+			// 4. For each color in the coloring, create a frontier that sees those commits but not the
+			//    conflicting ones, then traverse the conflict with that frontier.  Each color's traversal
+			//    should be displayed to the user.
+		})
 	})
+}
+
+type colorGraph struct {
+	edges map[string]map[string]bool
+}
+
+func (c *colorGraph) addEdge(a, b string) {
+	if c.edges == nil {
+		c.edges = make(map[string]map[string]bool)
+	}
+	for _, v := range [][2]string{{a, b}, {b, a}} {
+		if c.edges[v[0]] == nil {
+			c.edges[v[0]] = make(map[string]bool)
+		}
+		c.edges[v[0]][v[1]] = true
+	}
+}
+
+func (c *colorGraph) getColors() [][]string {
+	if len(c.edges) == 0 {
+		return nil
+	}
+
+	// Two-coloring is easy, so try that first.
+	if colors := c.twoColor(); colors != nil {
+		return colors
+	}
+
+	var nodes []string
+	for node := range c.edges {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+
+	used := make(map[string]bool)
+	var colors [][]string
+	for len(used) < len(c.edges) {
+		var color []string
+		adj := make(map[string]bool)
+		for _, node := range nodes {
+			if used[node] || adj[node] {
+				continue
+			}
+			color = append(color, node)
+			used[node] = true
+			for m := range c.edges[node] {
+				adj[m] = true
+			}
+		}
+		colors = append(colors, color)
+	}
+
+	return colors
+}
+
+func (c *colorGraph) twoColor() [][]string {
+	black := make(map[string]bool)
+	for n := range c.edges {
+		if _, ok := black[n]; !ok {
+			if !c.recursiveTwoColor(n, true, black) {
+				return nil
+			}
+		}
+	}
+	colors := make([][]string, 2)
+	for n, b := range black {
+		if b {
+			colors[0] = append(colors[0], n)
+		} else {
+			colors[1] = append(colors[1], n)
+		}
+	}
+	return colors
+}
+
+func (c *colorGraph) recursiveTwoColor(n string, color bool, black map[string]bool) bool {
+	if b, ok := black[n]; ok {
+		return b == color
+	}
+	black[n] = color
+	for m := range c.edges[n] {
+		if !c.recursiveTwoColor(m, !color, black) {
+			return false
+		}
+	}
+	return true
 }
 
 type simpleFrontier map[string]bool
