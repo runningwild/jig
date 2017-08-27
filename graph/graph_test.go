@@ -132,15 +132,15 @@ func TestVerge(t *testing.T) {
 			},
 			NodeRefs: []graph.NodeRef{
 				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
-				{Node: "src:foo.txt", Depth: 9}, // 'hotel'
+				{Node: "src:foo.txt", Depth: 8}, // 'golf'
 			},
 			Contents: []graph.NewContent{
-				{Content: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF")},
+				{Content: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT")},
 			},
 		}
 		graph.Apply(r, c1)
 
-		// This commit replaces 'charlie' and 'delta'
+		//  This inserts some text between delta and echo.
 		c2 := &graph.Commit{
 			Deps: []string{c0.Hash()},
 			EdgeRefs: []graph.EdgeRef{
@@ -152,7 +152,7 @@ func TestVerge(t *testing.T) {
 				{Node: "src:foo.txt", Depth: 6}, // 'echo'
 			},
 			Contents: []graph.NewContent{
-				{Content: stringsToContent("Buttons", "the", "buttonsball")},
+				{Content: stringsToContent("buttons", "the", "buttonsball")},
 			},
 		}
 		graph.Apply(r, c2)
@@ -246,7 +246,7 @@ func TestVerge(t *testing.T) {
 		})
 
 		Convey("monkeys", func() {
-			// This commit replaces 'charlie' and 'delta', just like c2, but in all caps.
+			// This inserts some text between delta and echo, just like c2, but in all caps.
 			c2x := &graph.Commit{
 				Deps: []string{c0.Hash()},
 				EdgeRefs: []graph.EdgeRef{
@@ -270,8 +270,8 @@ func TestVerge(t *testing.T) {
 					{Src: 0, Dst: 1},
 				},
 				NodeRefs: []graph.NodeRef{
-					{Node: "src:foo.txt", Depth: 9},  // 'hotel'
-					{Node: "src:foo.txt", Depth: 10}, // EOF
+					{Node: "src:foo.txt", Depth: 8},  // 'golf'
+					{Node: "src:foo.txt", Depth: 10}, // '' (trailing new-line)
 				},
 			}
 			graph.Apply(r, c4)
@@ -299,12 +299,19 @@ func TestVerge(t *testing.T) {
 			// Verify that c1, c2 and c2x are all mutually conflicted, and that c0 and c4 are not.
 			So(len(colors), ShouldEqual, 3)
 			So(len(colors[0]), ShouldEqual, 1)
-			So(allConflicts[colors[0]], ShouldBeTrue)
+			So(allConflicts[colors[0][0]], ShouldBeTrue)
 			So(len(colors[1]), ShouldEqual, 1)
-			So(allConflicts[colors[1]], ShouldBeTrue)
+			So(allConflicts[colors[1][0]], ShouldBeTrue)
 			So(len(colors[2]), ShouldEqual, 1)
-			So(allConflicts[colors[2]], ShouldBeTrue)
+			So(allConflicts[colors[2][0]], ShouldBeTrue)
 			So(len(allConflicts), ShouldEqual, 3)
+
+			buf := bytes.NewBuffer(nil)
+			So(graph.PrintPath(r, explicitFrontier(c0, c1, c4), "src:foo.txt", "snk:foo.txt", buf, "."), ShouldBeNil)
+			So(buf.String(), ShouldEqual, "alpha.bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf.india.")
+			buf.Truncate(0)
+			So(graph.PrintPath(r, explicitFrontier(c0, c2, c4), "src:foo.txt", "snk:foo.txt", buf, "."), ShouldBeNil)
+			So(buf.String(), ShouldEqual, "alpha.bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf.india.")
 
 			// NEXT: several steps to covering the full conflict:
 			// 1. Retract the verge until a single node is found that begins the conflict.

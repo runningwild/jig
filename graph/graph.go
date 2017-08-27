@@ -155,6 +155,64 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	return tail0, head1, nil
 }
 
+func GetPath(r Repo, f Frontier, src, dst string) ([]*Node, error) {
+	srcNode := r.GetNode(src)
+	dstNode := r.GetNode(dst)
+	if srcNode == nil {
+		return nil, fmt.Errorf("src node not found")
+	}
+	if dstNode == nil {
+		return nil, fmt.Errorf("dst node not found")
+	}
+	if !f.Observes(srcNode.Out[0].Commit) {
+		return nil, fmt.Errorf("file not found")
+	}
+	cur := srcNode
+	var path []*Node
+	for cur.Head != dst {
+		path = append(path, cur)
+		var out *Edge
+		for i := len(cur.Out) - 1; i >= 0; i-- {
+			if f.Observes(cur.Out[i].Commit) {
+				out = &cur.Out[i]
+				break
+			}
+		}
+		if out == nil {
+			return nil, fmt.Errorf("found an invalid terminal node")
+		}
+		cur = r.GetNode(out.Node)
+		if cur == nil {
+			return nil, fmt.Errorf("unattached edge")
+		}
+	}
+	path = append(path, dstNode)
+	return path, nil
+}
+
+func PrintPath(r Repo, f Frontier, src, dst string, w io.Writer, sep string) error {
+	path, err := GetPath(r, f, src, dst)
+	if err != nil {
+		return err
+	}
+	first := true
+	for _, n := range path {
+		c := r.GetContent(n.Content)
+		for _, line := range c {
+			if !first {
+				if _, err := w.Write([]byte(sep)); err != nil {
+					return err
+				}
+			}
+			first = false
+			if _, err := w.Write(line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
 	n := r.GetNode("src:" + path)
 	if n == nil {
