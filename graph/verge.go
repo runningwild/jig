@@ -68,26 +68,26 @@ func (v *Verge) clone() *Verge {
 
 // Advance advances the verge past node.  It panics if node is not a valid verge to advance past.
 func (v *Verge) Advance(node string) {
-	v.move(node, v.forward, v.backward, func(n *Node) []Edge { return n.Out }, func(n *Node) []Edge { return n.In })
+	v.move(node, v.forwardMover())
 }
 
 // Retract retracts the verge past node.  It panics if node is not a valid verge to retract past.
 func (v *Verge) Retract(node string) {
-	v.move(node, v.backward, v.forward, func(n *Node) []Edge { return n.In }, func(n *Node) []Edge { return n.Out })
+	v.move(node, v.backwardMover())
 }
 
 // move allows us to do Advance and Retract with the same code, all that's required is that we can
 // swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
-func (v *Verge) move(node string, forward, backward map[string]string, getForward, getBackward func(n *Node) []Edge) {
+func (v *Verge) move(node string, mov mover) {
 	n := v.r.GetNode(node)
 	// fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
-	for _, e := range getBackward(n) {
+	for _, e := range mov.GetIn(n) {
 		if !v.f.Observes(e.Commit) {
 			continue
 		}
 
 		// Going through the reference is actually only necessary on a Retract.
-		check := forward[e.Commit]
+		check := mov.ForwardEdges()[e.Commit]
 		if r := v.r.GetRef(check); r != "" {
 			check = r
 		}
@@ -95,17 +95,17 @@ func (v *Verge) move(node string, forward, backward map[string]string, getForwar
 			panic("invalid advance node")
 		}
 
-		delete(forward, e.Commit)
-		delete(backward, e.Commit)
+		delete(mov.ForwardEdges(), e.Commit)
+		delete(mov.BackwardEdges(), e.Commit)
 		// fmt.Printf("RDEPS remove node %s\n", e.Commit)
 		v.rdeps.removeNode(e.Commit)
 	}
-	for _, e := range getForward(n) {
+	for _, e := range mov.GetOut(n) {
 		if !v.f.Observes(e.Commit) {
 			continue
 		}
-		forward[e.Commit] = e.Node
-		backward[e.Commit] = node
+		mov.ForwardEdges()[e.Commit] = e.Node
+		mov.BackwardEdges()[e.Commit] = node
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
 			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
@@ -164,22 +164,23 @@ func (v *Verge) Conflicts() []string {
 // next returns a list of nodes that could be used as the next node the Verge can pass.
 // TODO: handle reverse edges
 func (v *Verge) Next() []string {
-	return v.look(v.forward, func(n *Node) []Edge { return n.In })
+	return v.look(v.forwardMover())
 }
 
 func (v *Verge) Prev() []string {
-	return v.look(v.backward, func(n *Node) []Edge { return n.Out })
+	return v.look(v.backwardMover())
 }
 
-func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []string {
+func (v *Verge) look(mov mover) []string {
+	// forward map[string]string, getIn func(*Node) []Edge) []string {
 	// Get a set of all nodes on the out end of all edges on the Verge.
 	dsts := make(map[string]bool)
-	for _, dst := range forward {
+	for _, dst := range mov.ForwardEdges() {
 		dsts[dst] = true
 	}
 
 	var keys []string
-	for key := range forward {
+	for key := range mov.ForwardEdges() {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -193,12 +194,12 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 		n := v.r.GetNode(dst)
 		count := 0
 		observable := 0
-		for _, e := range getIn(n) {
+		for _, e := range mov.GetIn(n) {
 			if !v.f.Observes(e.Commit) {
 				continue
 			}
 			observable++
-			target := forward[e.Commit]
+			target := mov.ForwardEdges()[e.Commit]
 			if r := v.r.GetRef(target); r != "" {
 				target = r
 			}
@@ -214,13 +215,86 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 	return good
 }
 
+// mover let's us write a function that goes forward through the graph and reuse it to do the same
+// thing backwards.  There are two implementations, forwardMover and backwardMover.
 type mover interface {
 	GetIn(n *Node) []Edge
 	GetOut(n *Node) []Edge
-	Next() []string
-	Prev() []string
 	GetHead(n *Node) string
 	GetTail(n *Node) string
+	Next() []string
+	Prev() []string
+	ForwardEdges() map[string]string
+	BackwardEdges() map[string]string
+}
+
+func (v *Verge) forwardMover() mover {
+	return (*forwardMover)(v)
+}
+
+type forwardMover Verge
+
+func (f *forwardMover) GetIn(n *Node) []Edge {
+	return n.In
+}
+func (f *forwardMover) GetOut(n *Node) []Edge {
+	return n.Out
+}
+func (f *forwardMover) GetHead(n *Node) string {
+	return n.Head
+}
+func (f *forwardMover) GetTail(n *Node) string {
+	return n.Tail
+}
+func (f *forwardMover) Next() []string {
+	return ((*Verge)(f)).Next()
+}
+func (f *forwardMover) Prev() []string {
+	return ((*Verge)(f)).Prev()
+}
+func (f *forwardMover) ForwardEdges() map[string]string {
+	return f.forward
+}
+func (f *forwardMover) BackwardEdges() map[string]string {
+	return f.backward
+}
+
+func (v *Verge) backwardMover() mover {
+	return (*backwardMover)(v)
+}
+
+type backwardMover Verge
+
+func (f *backwardMover) GetIn(n *Node) []Edge {
+	return n.Out
+}
+func (f *backwardMover) GetOut(n *Node) []Edge {
+	return n.In
+}
+func (f *backwardMover) GetHead(n *Node) string {
+	return n.Tail
+}
+func (f *backwardMover) GetTail(n *Node) string {
+	return n.Head
+}
+func (f *backwardMover) Next() []string {
+	return ((*Verge)(f)).Prev()
+}
+func (f *backwardMover) Prev() []string {
+	return ((*Verge)(f)).Next()
+}
+func (f *backwardMover) ForwardEdges() map[string]string {
+	return f.backward
+}
+func (f *backwardMover) BackwardEdges() map[string]string {
+	return f.forward
+}
+
+func (v *Verge) AdvanceUntilConverged() string {
+	return v.moveUntilConverged(v.forwardMover())
+}
+func (v *Verge) RetractUntilConverged() string {
+	return v.moveUntilConverged(v.backwardMover())
 }
 
 // TODO: Prove this works.
@@ -229,7 +303,7 @@ type mover interface {
 // currently tracking, we're done, even if there are more conflicting edges on the other side of
 // that node.  Returns the hash of the node at which everything converges.
 // This is a more simplified version of the method I first devised for tracking edges.
-func (v *Verge) AdvanceUntilConverged() string {
+func (v *Verge) moveUntilConverged(mov mover) string {
 	// track is the set of commits that have conflicted and are still on the verge.
 	track := make(map[string]bool)
 	for _, c := range v.Conflicts() {
@@ -238,19 +312,19 @@ func (v *Verge) AdvanceUntilConverged() string {
 
 	collapse := func(n *Node) map[string]bool {
 		remove := make(map[string]bool)
-		for _, e := range n.In {
+		for _, e := range mov.GetIn(n) {
 			if track[e.Commit] {
 				remove[e.Commit] = true
 			}
 		}
-		for _, e := range n.Out {
+		for _, e := range mov.GetOut(n) {
 			delete(remove, e.Commit)
 		}
 		return remove
 	}
 
 	for {
-		next := v.Next()
+		next := mov.Next()
 		if len(next) == 0 {
 			panic("ran out of ways to advance the verge before everything converged")
 		}
@@ -269,13 +343,13 @@ func (v *Verge) AdvanceUntilConverged() string {
 		}
 
 		sat := 0
-		for _, e := range n.In {
+		for _, e := range mov.GetIn(n) {
 			if track[e.Commit] {
 				sat++
 			}
 		}
 		if sat == len(track) {
-			return n.Head
+			return mov.GetHead(n)
 		}
 
 		remove := collapse(n)
@@ -283,42 +357,9 @@ func (v *Verge) AdvanceUntilConverged() string {
 		for c := range remove {
 			delete(track, c)
 		}
-		v.Advance(n.Head)
+		v.Advance(mov.GetHead(n))
 		fmt.Printf("Advancing past %s\n", bytes.Join(v.r.GetContent(n.Content), []byte(".")))
 		fmt.Printf("Conflicts at %v\n", v.Conflicts())
-		for _, c := range v.Conflicts() {
-			track[c] = true
-		}
-	}
-}
-
-// NEXT: Make a single function that does AdvanceUntilConverged and RetractUntilConverged.me
-func (v *Verge) RetractUntilConverged() string {
-	// track is the set of commits that have conflicted and are still on the verge.
-	track := make(map[string]bool)
-	for _, c := range v.Conflicts() {
-		track[c] = true
-	}
-
-	for {
-		prev := v.Prev()
-		if len(prev) == 0 {
-			panic("ran out of ways to retract the verge before everything converged")
-		}
-		n := v.r.GetNode(prev[len(prev)-1])
-		sat := 0
-		for _, e := range n.Out {
-			if track[e.Commit] {
-				sat++
-			}
-		}
-		if sat == len(track) {
-			return n.Tail
-		}
-		for _, e := range n.Out {
-			delete(track, e.Commit)
-		}
-		v.Advance(n.Tail)
 		for _, c := range v.Conflicts() {
 			track[c] = true
 		}
