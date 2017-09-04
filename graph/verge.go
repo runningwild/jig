@@ -48,6 +48,24 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 	return v
 }
 
+func (v *Verge) clone() *Verge {
+	v2 := &Verge{
+		r:        v.r,
+		f:        v.f,
+		forward:  make(map[string]string),
+		backward: make(map[string]string),
+		deps:     v.deps.clone(),
+		rdeps:    v.rdeps.clone(),
+	}
+	for commit, node := range v.forward {
+		v2.forward[commit] = node
+	}
+	for commit, node := range v.backward {
+		v2.backward[commit] = node
+	}
+	return v2
+}
+
 // Advance advances the verge past node.  It panics if node is not a valid verge to advance past.
 func (v *Verge) Advance(node string) {
 	v.move(node, v.forward, v.backward, func(n *Node) []Edge { return n.Out }, func(n *Node) []Edge { return n.In })
@@ -62,7 +80,7 @@ func (v *Verge) Retract(node string) {
 // swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
 func (v *Verge) move(node string, forward, backward map[string]string, getForward, getBackward func(n *Node) []Edge) {
 	n := v.r.GetNode(node)
-	fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
+	// fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
 	for _, e := range getBackward(n) {
 		if !v.f.Observes(e.Commit) {
 			continue
@@ -79,7 +97,7 @@ func (v *Verge) move(node string, forward, backward map[string]string, getForwar
 
 		delete(forward, e.Commit)
 		delete(backward, e.Commit)
-		fmt.Printf("RDEPS remove node %s\n", e.Commit)
+		// fmt.Printf("RDEPS remove node %s\n", e.Commit)
 		v.rdeps.removeNode(e.Commit)
 	}
 	for _, e := range getForward(n) {
@@ -91,7 +109,7 @@ func (v *Verge) move(node string, forward, backward map[string]string, getForwar
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
 			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
-			fmt.Printf("RDEPS add edge %s -> %s\n", dep, e.Commit)
+			// fmt.Printf("RDEPS add edge %s -> %s\n", dep, e.Commit)
 		}
 	}
 }
@@ -109,18 +127,18 @@ func (v *Verge) state() {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	fmt.Printf("Current forward state (%d edges):\n", len(keys))
+	// fmt.Printf("Current forward state (%d edges):\n", len(keys))
 	for _, key := range keys {
-		var content string
+		// var content string
 		ns := v.forward[key]
 		if r := v.r.GetRef(ns); r != "" {
 			ns = r
 		}
 		n := v.r.GetNode(ns)
 		if n != nil {
-			content = string(bytes.Join(v.r.GetContent(n.Content), []byte(".")))
+			// content = string(bytes.Join(v.r.GetContent(n.Content), []byte(".")))
 		}
-		fmt.Printf("Commit %s -> Node %s: %s\n", key, v.forward[key], content)
+		// fmt.Printf("Commit %s -> Node %s: %s\n", key, v.forward[key], content)
 	}
 }
 
@@ -132,7 +150,7 @@ func (v *Verge) Conflicts() []string {
 			visible[c] = true
 		}
 	}
-	fmt.Printf("Visible state: %v\n", visible)
+	// fmt.Printf("Visible state: %v\n", visible)
 	// Find all commits that are not dominated by at least one other commit.
 	dominators := v.rdeps.dominators()
 	if len(dominators) == 1 {
@@ -196,6 +214,117 @@ func (v *Verge) look(forward map[string]string, getIn func(*Node) []Edge) []stri
 	return good
 }
 
+type mover interface {
+	GetIn(n *Node) []Edge
+	GetOut(n *Node) []Edge
+	Next() []string
+	Prev() []string
+	GetHead(n *Node) string
+	GetTail(n *Node) string
+}
+
+// TODO: Prove this works.
+// Every time the verge advances we start tracking any edges that belong to commits that conflict on
+// the verge at its current position.  Once we find a node that collapses all of the commits we're
+// currently tracking, we're done, even if there are more conflicting edges on the other side of
+// that node.  Returns the hash of the node at which everything converges.
+// This is a more simplified version of the method I first devised for tracking edges.
+func (v *Verge) AdvanceUntilConverged() string {
+	// track is the set of commits that have conflicted and are still on the verge.
+	track := make(map[string]bool)
+	for _, c := range v.Conflicts() {
+		track[c] = true
+	}
+
+	collapse := func(n *Node) map[string]bool {
+		remove := make(map[string]bool)
+		for _, e := range n.In {
+			if track[e.Commit] {
+				remove[e.Commit] = true
+			}
+		}
+		for _, e := range n.Out {
+			delete(remove, e.Commit)
+		}
+		return remove
+	}
+
+	for {
+		next := v.Next()
+		if len(next) == 0 {
+			panic("ran out of ways to advance the verge before everything converged")
+		}
+
+		var n *Node
+		// Try to find a node that doesn't collapse anything.
+		for _, m := range next {
+			if len(collapse(v.r.GetNode(m))) == 0 {
+				n = v.r.GetNode(m)
+				break
+			}
+		}
+		// Otherwise any node is fine.
+		if n == nil {
+			n = v.r.GetNode(next[0])
+		}
+
+		sat := 0
+		for _, e := range n.In {
+			if track[e.Commit] {
+				sat++
+			}
+		}
+		if sat == len(track) {
+			return n.Head
+		}
+
+		remove := collapse(n)
+		fmt.Printf("Deleting %v from %v\n", remove, track)
+		for c := range remove {
+			delete(track, c)
+		}
+		v.Advance(n.Head)
+		fmt.Printf("Advancing past %s\n", bytes.Join(v.r.GetContent(n.Content), []byte(".")))
+		fmt.Printf("Conflicts at %v\n", v.Conflicts())
+		for _, c := range v.Conflicts() {
+			track[c] = true
+		}
+	}
+}
+
+// NEXT: Make a single function that does AdvanceUntilConverged and RetractUntilConverged.me
+func (v *Verge) RetractUntilConverged() string {
+	// track is the set of commits that have conflicted and are still on the verge.
+	track := make(map[string]bool)
+	for _, c := range v.Conflicts() {
+		track[c] = true
+	}
+
+	for {
+		prev := v.Prev()
+		if len(prev) == 0 {
+			panic("ran out of ways to retract the verge before everything converged")
+		}
+		n := v.r.GetNode(prev[len(prev)-1])
+		sat := 0
+		for _, e := range n.Out {
+			if track[e.Commit] {
+				sat++
+			}
+		}
+		if sat == len(track) {
+			return n.Tail
+		}
+		for _, e := range n.Out {
+			delete(track, e.Commit)
+		}
+		v.Advance(n.Tail)
+		for _, c := range v.Conflicts() {
+			track[c] = true
+		}
+	}
+}
+
 type simpleGraph struct {
 	edges map[string]map[string]bool
 	nodes map[string]bool
@@ -206,6 +335,25 @@ func makeSimpleGraph() *simpleGraph {
 		edges: make(map[string]map[string]bool),
 		nodes: make(map[string]bool),
 	}
+}
+
+func (sg simpleGraph) clone() *simpleGraph {
+	sg2 := simpleGraph{
+		edges: make(map[string]map[string]bool),
+		nodes: make(map[string]bool),
+	}
+	for src, edges := range sg.edges {
+		if sg2.edges[src] == nil {
+			sg2.edges[src] = make(map[string]bool)
+		}
+		for dst := range edges {
+			sg2.edges[src][dst] = true
+		}
+	}
+	for node := range sg.nodes {
+		sg2.nodes[node] = true
+	}
+	return &sg2
 }
 
 func (sg simpleGraph) String() string {
@@ -232,7 +380,7 @@ func (sg *simpleGraph) addNode(n string) {
 }
 
 func (sg *simpleGraph) addEdge(src, dst string) {
-	fmt.Printf("AddEdge %s -> %s\n", src, dst)
+	// fmt.Printf("AddEdge %s -> %s\n", src, dst)
 	if _, ok := sg.edges[src]; !ok {
 		sg.edges[src] = make(map[string]bool)
 	}
@@ -242,7 +390,7 @@ func (sg *simpleGraph) addEdge(src, dst string) {
 	}
 }
 func (sg *simpleGraph) removeNode(n string) {
-	fmt.Printf("RemoveNode %s\n", n)
+	// fmt.Printf("RemoveNode %s\n", n)
 	delete(sg.nodes, n)
 }
 

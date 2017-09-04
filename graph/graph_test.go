@@ -286,13 +286,34 @@ func TestVerge(t *testing.T) {
 						if c0 == c1 {
 							continue
 						}
-						fmt.Printf("Conflict: %v %v\n", c0, c1)
 						c.addEdge(c0, c1)
 						allConflicts[c0] = true
 						allConflicts[c1] = true
 					}
 				}
 			}
+
+			Convey("stuff", func() {
+				fmt.Printf("%s: %s\n", c0.Hash(), "all the stuff")
+				fmt.Printf("%s: %s\n", c1.Hash(), "CHARLIE.DELTA.ECHO.FOXTROT")
+				fmt.Printf("%s: %s\n", c2.Hash(), "buttons.the.buttonsball")
+				fmt.Printf("%s: %s\n", c2x.Hash(), "BUTTONS.THE.BUTTONSBALL")
+				fmt.Printf("%s: %s\n", c4.Hash(), "delete hotel")
+				fmt.Printf("Advancing Verge\n")
+				v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c2x, c4), "foo.txt")
+				for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+					v.Advance(n)
+					fmt.Printf("%v\n", v)
+				}
+				// fmt.Printf("Conflicts at %v\n", v.Conflicts())
+				end := v.AdvanceUntilConverged()
+				cont := r.GetContent(r.GetNode(end).Content)
+				So(string(cont[0]), ShouldEqual, "golf")
+				// start := v.RetractUntilConverged()
+				// cont = r.GetContent(r.GetNode(start).Content)
+				// So(string(cont[0]), ShouldEqual, "bravo")
+			})
+			return
 			fmt.Printf("%v\n", c)
 			colors := c.getColors()
 
