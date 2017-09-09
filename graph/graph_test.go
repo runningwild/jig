@@ -293,13 +293,14 @@ func TestVerge(t *testing.T) {
 			}
 
 			Convey("stuff", func() {
-				fmt.Printf("%s: %s\n", c0.Hash(), "all the stuff")
-				fmt.Printf("%s: %s\n", c1.Hash(), "CHARLIE.DELTA.ECHO.FOXTROT")
-				fmt.Printf("%s: %s\n", c2.Hash(), "buttons.the.buttonsball")
-				fmt.Printf("%s: %s\n", c2x.Hash(), "BUTTONS.THE.BUTTONSBALL")
-				fmt.Printf("%s: %s\n", c4.Hash(), "delete hotel")
+				fmt.Printf("c0(%s): %s\n", c0.Hash(), "all the stuff")
+				fmt.Printf("c1(%s): %s\n", c1.Hash(), "CHARLIE.DELTA.ECHO.FOXTROT")
+				fmt.Printf("c2(%s): %s\n", c2.Hash(), "buttons.the.buttonsball")
+				fmt.Printf("c2x(%s): %s\n", c2x.Hash(), "BUTTONS.THE.BUTTONSBALL")
+				fmt.Printf("c4(%s): %s\n", c4.Hash(), "delete hotel")
 				fmt.Printf("Advancing Verge\n")
-				v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c2x, c4), "foo.txt")
+				f := explicitFrontier(c0, c1, c2, c2x, c4)
+				v := graph.MakeVerge(r, f, "foo.txt")
 				for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
 					v.Advance(n)
 					fmt.Printf("%v\n", v)
@@ -310,9 +311,46 @@ func TestVerge(t *testing.T) {
 				cont := r.GetContent(r.GetNode(end).Content)
 				So(string(cont[0]), ShouldEqual, "golf")
 				v = vc
-				start, _ := v.RetractUntilConverged()
+				start, conflicts := v.RetractUntilConverged()
 				cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
 				So(string(cont[len(cont)-1]), ShouldEqual, "bravo")
+				var conflictsList []string
+				for c := range conflicts {
+					conflictsList = append(conflictsList, c)
+				}
+				So(conflictsList, ShouldNotContain, c0.Hash())
+				So(conflictsList, ShouldContain, c1.Hash())
+				So(conflictsList, ShouldContain, c2.Hash())
+				So(conflictsList, ShouldContain, c2x.Hash())
+				So(conflictsList, ShouldNotContain, c4.Hash())
+				versions, err := graph.ReadVersions(r, f, r.GetRef(start), end, conflicts, []byte("."))
+				So(err, ShouldBeNil)
+				So(versions, ShouldNotBeNil)
+				So(len(versions), ShouldEqual, 3)
+				unhit := map[string]bool{
+					"bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf":                         true,
+					"bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf": true,
+					"bravo.charlie.delta.BUTTONS.THE.BUTTONSBALL.echo.foxtrot.golf": true,
+				}
+				for i := range versions {
+					s := string(versions[i].Data)
+					delete(unhit, s)
+					if s == "bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf" {
+						// t.Errorf("fail bean: %v\n", versions[i].Commits)
+						So(len(versions[i].Commits), ShouldEqual, 1)
+						So(versions[i].Commits[c1.Hash()], ShouldBeTrue)
+					} else if s == "bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf" {
+						So(len(versions[i].Commits), ShouldEqual, 1)
+						So(versions[i].Commits[c2.Hash()], ShouldBeTrue)
+					} else if s == "bravo.charlie.delta.BUTTONS.THE.BUTTONSBALL.echo.foxtrot.golf" {
+						// t.Errorf("fail bean: %v\n", versions[i].Commits)
+						So(len(versions[i].Commits), ShouldEqual, 1)
+						So(versions[i].Commits[c2x.Hash()], ShouldBeTrue)
+					} else {
+						t.Errorf("unexpected version %q", s)
+					}
+				}
+				So(unhit, ShouldBeEmpty)
 			})
 			return
 			fmt.Printf("%v\n", c)

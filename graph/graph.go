@@ -395,7 +395,6 @@ func Apply(r Repo, c *Commit) error {
 	// Create all of the new nodes added by this commit.
 	var newNodes []string
 	for i, nc := range c.Contents {
-		fmt.Printf("WOrking on %d %v\n", i, nc)
 		if nc.Form == FormFileSrc || nc.Form == FormFileSnk {
 			mode := "src"
 			if nc.Form == FormFileSnk {
@@ -410,7 +409,6 @@ func Apply(r Repo, c *Commit) error {
 			r.PutNode(n)
 			r.PutRef(n.Tail, n.Head)
 			newNodes = append(newNodes, n.Head)
-			fmt.Printf("added %v\n", n)
 			continue
 		}
 		n := &Node{
@@ -445,7 +443,6 @@ func Apply(r Repo, c *Commit) error {
 		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
 		r.PutNode(n)
 		r.PutRef(n.Tail, n.Head)
-		fmt.Printf("Ref %q -> %q\n", n.Tail, n.Head)
 		newNodes = append(newNodes, n.Head)
 	}
 
