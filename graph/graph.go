@@ -408,6 +408,7 @@ func Apply(r Repo, c *Commit) error {
 			}
 			n.Tail = n.Head
 			r.PutNode(n)
+			r.PutRef(n.Tail, n.Head)
 			newNodes = append(newNodes, n.Head)
 			fmt.Printf("added %v\n", n)
 			continue
@@ -444,6 +445,7 @@ func Apply(r Repo, c *Commit) error {
 		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
 		r.PutNode(n)
 		r.PutRef(n.Tail, n.Head)
+		fmt.Printf("Ref %q -> %q\n", n.Tail, n.Head)
 		newNodes = append(newNodes, n.Head)
 	}
 

@@ -48,14 +48,14 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 	return v
 }
 
-func (v *Verge) clone() *Verge {
+func (v *Verge) Clone() *Verge {
 	v2 := &Verge{
 		r:        v.r,
 		f:        v.f,
 		forward:  make(map[string]string),
 		backward: make(map[string]string),
-		deps:     v.deps.clone(),
-		rdeps:    v.rdeps.clone(),
+		deps:     v.deps.Clone(),
+		rdeps:    v.rdeps.Clone(),
 	}
 	for commit, node := range v.forward {
 		v2.forward[commit] = node
@@ -79,21 +79,22 @@ func (v *Verge) Retract(node string) {
 // move allows us to do Advance and Retract with the same code, all that's required is that we can
 // swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
 func (v *Verge) move(node string, mov mover) {
-	n := v.r.GetNode(node)
-	// fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
+	n := mov.GetNode(node)
+	// n := v.r.GetNode(node)
+	fmt.Printf("Trying to advance verge past %q (%s)\n", node, v.nodeContent(node))
 	for _, e := range mov.GetIn(n) {
 		if !v.f.Observes(e.Commit) {
 			continue
 		}
 
 		// Going through the reference is actually only necessary on a Retract.
-		check := mov.ForwardEdges()[e.Commit]
-		if r := v.r.GetRef(check); r != "" {
-			check = r
-		}
-		if check != node {
-			panic("invalid advance node")
-		}
+		// check := mov.ForwardEdges()[e.Commit]
+		// if r := v.r.GetRef(check); r != "" {
+		// 	check = r
+		// }
+		// if check != node {
+		// 	panic("invalid advance node")
+		// }
 
 		delete(mov.ForwardEdges(), e.Commit)
 		delete(mov.BackwardEdges(), e.Commit)
@@ -104,8 +105,10 @@ func (v *Verge) move(node string, mov mover) {
 		if !v.f.Observes(e.Commit) {
 			continue
 		}
-		mov.ForwardEdges()[e.Commit] = e.Node
-		mov.BackwardEdges()[e.Commit] = node
+		fmt.Printf("%T Adding forward edge %s -> %s (%s)\n", mov, e.Commit, mov.GetHead(mov.GetNode(e.Node)), v.nodeContent(e.Node))
+		mov.ForwardEdges()[e.Commit] = mov.GetHead(mov.GetNode(e.Node))
+		fmt.Printf("%T Adding backward edge %s -> %s (%s)\n", mov, e.Commit, mov.GetTail(mov.GetNode(node)), v.nodeContent(node))
+		mov.BackwardEdges()[e.Commit] = mov.GetTail(mov.GetNode(node))
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
 			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
@@ -118,7 +121,9 @@ func (v *Verge) nodeContent(node string) string {
 	if r := v.r.GetRef(node); r != "" {
 		node = r
 	}
-	return string(bytes.Join(v.r.GetContent(v.r.GetNode(node).Content), []byte(".")))
+	n := v.r.GetNode(node)
+	s := string(bytes.Join(v.r.GetContent(n.Content), []byte(".")))
+	return fmt.Sprintf("(%s) %s (%s)", n.Head, s, n.Tail)
 }
 
 func (v *Verge) state() {
@@ -172,39 +177,42 @@ func (v *Verge) Prev() []string {
 }
 
 func (v *Verge) look(mov mover) []string {
-	// forward map[string]string, getIn func(*Node) []Edge) []string {
 	// Get a set of all nodes on the out end of all edges on the Verge.
 	dsts := make(map[string]bool)
-	for _, dst := range mov.ForwardEdges() {
+	fmt.Printf("Checking edges\n")
+	for c, dst := range mov.ForwardEdges() {
 		dsts[dst] = true
+		fmt.Printf("%T Edge(%s): %s\n", mov, c, dst)
 	}
 
-	var keys []string
-	for key := range mov.ForwardEdges() {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	// var keys []string
+	// for key := range mov.ForwardEdges() {
+	// 	keys = append(keys, key)
+	// }
+	// sort.Strings(keys)
 
 	// Acceptable nodes are ones whose inputs edges are all on the Verge.
 	var good []string
 	for dst := range dsts {
-		if v.r.GetRef(dst) != "" {
-			dst = v.r.GetRef(dst)
-		}
-		n := v.r.GetNode(dst)
+		n := mov.GetNode(dst)
 		count := 0
 		observable := 0
+		fmt.Printf("Edge to %s has edges %v\n", dst, mov.GetIn(n))
 		for _, e := range mov.GetIn(n) {
 			if !v.f.Observes(e.Commit) {
+				fmt.Printf("Don't observe %s\n", e.Commit)
 				continue
 			}
 			observable++
 			target := mov.ForwardEdges()[e.Commit]
-			if r := v.r.GetRef(target); r != "" {
-				target = r
-			}
+			// if r := v.r.GetRef(target); r != "" {
+			// 	target = r
+			// }
 			if target == dst {
+				fmt.Printf("Counting %s\n", e.Commit)
 				count++
+			} else {
+				fmt.Printf("Not Counting %s\n", e.Commit)
 			}
 		}
 		if count != observable {
@@ -222,6 +230,7 @@ type mover interface {
 	GetOut(n *Node) []Edge
 	GetHead(n *Node) string
 	GetTail(n *Node) string
+	GetNode(n string) *Node
 	Next() []string
 	Prev() []string
 	ForwardEdges() map[string]string
@@ -246,6 +255,9 @@ func (f *forwardMover) GetHead(n *Node) string {
 func (f *forwardMover) GetTail(n *Node) string {
 	return n.Tail
 }
+func (f *forwardMover) GetNode(n string) *Node {
+	return f.r.GetNode(n)
+}
 func (f *forwardMover) Next() []string {
 	return ((*Verge)(f)).Next()
 }
@@ -265,49 +277,63 @@ func (v *Verge) backwardMover() mover {
 
 type backwardMover Verge
 
-func (f *backwardMover) GetIn(n *Node) []Edge {
+func (b *backwardMover) GetIn(n *Node) []Edge {
 	return n.Out
 }
-func (f *backwardMover) GetOut(n *Node) []Edge {
+func (b *backwardMover) GetOut(n *Node) []Edge {
 	return n.In
 }
-func (f *backwardMover) GetHead(n *Node) string {
+func (b *backwardMover) GetHead(n *Node) string {
 	return n.Tail
 }
-func (f *backwardMover) GetTail(n *Node) string {
+func (b *backwardMover) GetTail(n *Node) string {
 	return n.Head
 }
-func (f *backwardMover) Next() []string {
-	return ((*Verge)(f)).Prev()
+func (b *backwardMover) GetNode(n string) *Node {
+	// fmt.Printf("%s -> %v\n", n, b.r.GetRef(n))
+	// fmt.Printf("%s -> %s\n", n, bytes.Join(b.r.GetContent(b.r.GetNode(n).Content), []byte(".")))
+	return b.r.GetNode(b.r.GetRef(n))
 }
-func (f *backwardMover) Prev() []string {
-	return ((*Verge)(f)).Next()
+func (b *backwardMover) Next() []string {
+	return ((*Verge)(b)).Prev()
 }
-func (f *backwardMover) ForwardEdges() map[string]string {
-	return f.backward
+func (b *backwardMover) Prev() []string {
+	return ((*Verge)(b)).Next()
 }
-func (f *backwardMover) BackwardEdges() map[string]string {
-	return f.forward
+func (b *backwardMover) ForwardEdges() map[string]string {
+	return b.backward
+}
+func (b *backwardMover) BackwardEdges() map[string]string {
+	return b.forward
 }
 
-func (v *Verge) AdvanceUntilConverged() string {
+func (v *Verge) AdvanceUntilConverged() (string, map[Conflict]bool) {
 	return v.moveUntilConverged(v.forwardMover())
 }
-func (v *Verge) RetractUntilConverged() string {
+func (v *Verge) RetractUntilConverged() (string, map[Conflict]bool) {
 	return v.moveUntilConverged(v.backwardMover())
 }
 
 // TODO: Prove this works.
-// Every time the verge advances we start tracking any edges that belong to commits that conflict on
-// the verge at its current position.  Once we find a node that collapses all of the commits we're
-// currently tracking, we're done, even if there are more conflicting edges on the other side of
-// that node.  Returns the hash of the node at which everything converges.
-// This is a more simplified version of the method I first devised for tracking edges.
-func (v *Verge) moveUntilConverged(mov mover) string {
+// Always advance the verge by choosing a node that doesn't collapse any of the commits we're
+// tracking.  Every time the verge advances we start tracking any edges that belong to commits that
+// conflict on the verge at its current position.  Once we find a node that collapses all of the
+// commits we're currently tracking, we're done, even if there are more conflicting edges on the
+// other side of that node.  Returns the hash of the node at which everything converges.  This is a
+// more simplified version of the method I first devised for tracking edges.
+// NEXT: This probably needs to be extended to report back all pairs of conflicting commits so that
+// we can traverse the entire conflict multiple times to decide what to show the user.
+func (v *Verge) moveUntilConverged(mov mover) (string, map[Conflict]bool) {
 	// track is the set of commits that have conflicted and are still on the verge.
 	track := make(map[string]bool)
+	conflicts := make(map[Conflict]bool)
 	for _, c := range v.Conflicts() {
 		track[c] = true
+		for _, d := range v.Conflicts() {
+			if c != d {
+				conflicts[MakeConflict(c, d)] = true
+			}
+		}
 	}
 
 	collapse := func(n *Node) map[string]bool {
@@ -325,21 +351,28 @@ func (v *Verge) moveUntilConverged(mov mover) string {
 
 	for {
 		next := mov.Next()
+		fmt.Printf("Next:\n")
+		for _, n := range next {
+			fmt.Printf("%s -> %v %v\n", n, mov.GetNode(n).Head, mov.GetNode(n).Tail)
+		}
 		if len(next) == 0 {
 			panic("ran out of ways to advance the verge before everything converged")
 		}
 
 		var n *Node
 		// Try to find a node that doesn't collapse anything.
-		for _, m := range next {
-			if len(collapse(v.r.GetNode(m))) == 0 {
-				n = v.r.GetNode(m)
+		for _, h := range next {
+			fmt.Printf("Looking up %s\n", h)
+			m := mov.GetNode(h)
+			fmt.Printf("Got %v\n", m)
+			if len(collapse(m)) == 0 {
+				n = m
 				break
 			}
 		}
 		// Otherwise any node is fine.
 		if n == nil {
-			n = v.r.GetNode(next[0])
+			n = mov.GetNode(next[0])
 		}
 
 		sat := 0
@@ -349,7 +382,7 @@ func (v *Verge) moveUntilConverged(mov mover) string {
 			}
 		}
 		if sat == len(track) {
-			return mov.GetHead(n)
+			return mov.GetHead(n), conflicts
 		}
 
 		remove := collapse(n)
@@ -357,13 +390,37 @@ func (v *Verge) moveUntilConverged(mov mover) string {
 		for c := range remove {
 			delete(track, c)
 		}
-		v.Advance(mov.GetHead(n))
-		fmt.Printf("Advancing past %s\n", bytes.Join(v.r.GetContent(n.Content), []byte(".")))
+		switch mov.(type) {
+		case *forwardMover:
+			fmt.Printf("Advancing ")
+		case *backwardMover:
+			fmt.Printf("Retracting ")
+		default:
+		}
+		fmt.Printf("past %s\n", bytes.Join(v.r.GetContent(n.Content), []byte(".")))
 		fmt.Printf("Conflicts at %v\n", v.Conflicts())
+		v.move(mov.GetHead(n), mov)
+		// v.Advance(mov.GetHead(n))
 		for _, c := range v.Conflicts() {
 			track[c] = true
+			for _, d := range v.Conflicts() {
+				if c != d {
+					conflicts[MakeConflict(c, d)] = true
+				}
+			}
 		}
 	}
+}
+
+type Conflict struct {
+	a, b string
+}
+
+func MakeConflict(a, b string) Conflict {
+	if a < b {
+		return Conflict{a, b}
+	}
+	return Conflict{b, a}
 }
 
 type simpleGraph struct {
@@ -378,7 +435,7 @@ func makeSimpleGraph() *simpleGraph {
 	}
 }
 
-func (sg simpleGraph) clone() *simpleGraph {
+func (sg simpleGraph) Clone() *simpleGraph {
 	sg2 := simpleGraph{
 		edges: make(map[string]map[string]bool),
 		nodes: make(map[string]bool),

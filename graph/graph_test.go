@@ -179,8 +179,7 @@ func TestVerge(t *testing.T) {
 			// Should be able to advance until we get to the snk node.
 			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
 				v.Advance(n)
-				fmt.Printf("prev: %v\n", v.Prev())
-				So(v.Prev(), ShouldContain, n)
+				So(v.Prev(), ShouldContain, r.GetNode(n).Tail)
 				So(len(v.Next()), ShouldBeGreaterThan, 0)
 				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
@@ -188,7 +187,7 @@ func TestVerge(t *testing.T) {
 			// Should be able to retract until we get to the snk node.
 			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
 				v.Retract(n)
-				So(v.Next(), ShouldContain, n)
+				So(v.Next(), ShouldContain, r.GetRef(n))
 				So(len(v.Prev()), ShouldBeGreaterThan, 0)
 				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
@@ -201,7 +200,7 @@ func TestVerge(t *testing.T) {
 			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
 				v.Advance(n)
 				fmt.Printf("prev: %v\n", v.Prev())
-				So(v.Prev(), ShouldContain, n)
+				So(v.Prev(), ShouldContain, r.GetNode(n).Tail)
 				So(len(v.Next()), ShouldBeGreaterThan, 0)
 				if len(v.Conflicts()) > 0 {
 					foundConflict = true
@@ -213,7 +212,7 @@ func TestVerge(t *testing.T) {
 			// Should be able to retract until we get to the snk node.
 			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
 				v.Retract(n)
-				So(v.Next(), ShouldContain, n)
+				So(v.Next(), ShouldContain, r.GetRef(n))
 				So(len(v.Prev()), ShouldBeGreaterThan, 0)
 				if len(v.Conflicts()) > 0 {
 					foundConflict = true
@@ -231,7 +230,7 @@ func TestVerge(t *testing.T) {
 			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
 				v.Advance(n)
 				fmt.Printf("prev: %v\n", v.Prev())
-				So(v.Prev(), ShouldContain, n)
+				So(v.Prev(), ShouldContain, r.GetNode(n).Tail)
 				So(len(v.Next()), ShouldBeGreaterThan, 0)
 				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
@@ -239,7 +238,7 @@ func TestVerge(t *testing.T) {
 			// Should be able to retract until we get to the snk node.
 			for n := v.Prev()[0]; n != "src:foo.txt"; n = v.Prev()[0] {
 				v.Retract(n)
-				So(v.Next(), ShouldContain, n)
+				So(v.Next(), ShouldContain, r.GetRef(n))
 				So(len(v.Prev()), ShouldBeGreaterThan, 0)
 				So(len(v.Conflicts()), ShouldBeZeroValue)
 			}
@@ -305,13 +304,15 @@ func TestVerge(t *testing.T) {
 					v.Advance(n)
 					fmt.Printf("%v\n", v)
 				}
+				vc := v.Clone()
 				// fmt.Printf("Conflicts at %v\n", v.Conflicts())
-				end := v.AdvanceUntilConverged()
+				end, _ := v.AdvanceUntilConverged()
 				cont := r.GetContent(r.GetNode(end).Content)
 				So(string(cont[0]), ShouldEqual, "golf")
-				// start := v.RetractUntilConverged()
-				// cont = r.GetContent(r.GetNode(start).Content)
-				// So(string(cont[0]), ShouldEqual, "bravo")
+				v = vc
+				start, _ := v.RetractUntilConverged()
+				cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
+				So(string(cont[len(cont)-1]), ShouldEqual, "bravo")
 			})
 			return
 			fmt.Printf("%v\n", c)
@@ -333,17 +334,6 @@ func TestVerge(t *testing.T) {
 			buf.Truncate(0)
 			So(graph.PrintPath(r, explicitFrontier(c0, c2, c4), "src:foo.txt", "snk:foo.txt", buf, "."), ShouldBeNil)
 			So(buf.String(), ShouldEqual, "alpha.bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf.india.")
-
-			// NEXT: several steps to covering the full conflict:
-			// 1. Retract the verge until a single node is found that begins the conflict.
-			//    This requires tracking which commits are in conflict as specified in the doc.
-			// 2. Scan forward until the single node at which the conflict ends is found.
-			// 3. For every set of conflicting commits, track each pair that conflicts, then find a
-			//    coloring so we know how many different sets of commits need to be shown to the user.
-			//    This is NP-hard so don't knock your brains out.
-			// 4. For each color in the coloring, create a frontier that sees those commits but not the
-			//    conflicting ones, then traverse the conflict with that frontier.  Each color's traversal
-			//    should be displayed to the user.
 		})
 	})
 }
