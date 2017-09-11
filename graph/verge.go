@@ -387,6 +387,75 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 	}
 }
 
+// GetDominatedGroups constructs one or more groups from the commits contained in conflicts such
+// that each group is a maximal set of commits that cannot conflict.  Each group is specified as a
+// []string and the commits in it are ordered topologically with the most dominant commit first.
+func GetDominatedGroups(r SuperRepo, f Frontier, conflicts map[string]bool) [][]string {
+	forward := make(map[string][]string)
+	reverse := make(map[string][]string)
+	for c := range conflicts {
+		forward[c], reverse[c] = nil, nil
+	}
+	for a := range conflicts {
+		for b := range conflicts {
+			if a == b {
+				continue
+			}
+			if r.Dominates(a, b) {
+				forward[a] = append(forward[a], b)
+				reverse[b] = append(reverse[b], a)
+			}
+		}
+	}
+	used := make(map[string]bool)
+	var groups [][]string
+	for c := range reverse {
+		if len(c) > 0 || used[c] {
+			continue
+		}
+		used[c] = true
+
+	}
+	return groups
+}
+
+func ToposortSubgraph(g map[string][]string) []string {
+	heads := make(map[string]bool)
+	for c := range g {
+		heads[c] = false
+	}
+	for c := range g {
+		for _, d := range g[c] {
+			delete(heads, d)
+		}
+	}
+	// Heads should now contain only those commits that are undominated.
+	var res []string
+	used := make(map[string]bool)
+	for h := range heads {
+		topohelper(g, h, used, &res)
+	}
+	for i := 0; i < len(res)/2; i++ {
+		swap := len(res) - 1 - i
+		res[i], res[swap] = res[swap], res[i]
+	}
+	return res
+}
+
+func topohelper(g map[string][]string, cur string, used map[string]bool, res *[]string) {
+	if used[cur] {
+		return
+	}
+	for _, c := range g[cur] {
+		topohelper(g, c, used, res)
+	}
+	used[cur] = true
+	*res = append(*res, cur)
+}
+
+// TODO: this currently can returns version that, while self-consistent, put A and B in separate version
+// when A depends on B, which is a bit odd.  To fix this we need to be able to go from a set of commits
+// to a subgraph that shows their transitive relationships.
 func ReadVersions(r Repo, f Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
 	used := make(map[string]bool)
 	var versions []Version

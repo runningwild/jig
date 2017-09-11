@@ -9,6 +9,14 @@ import (
 	skein512 "github.com/runningwild/skein/hash/512"
 )
 
+// SuperRepo is like a Repo but it contains functionality that can be implemented on top of Repo.
+type SuperRepo interface {
+	Repo
+
+	// Dominates returns true iff a dominates b.
+	Dominates(a, b string) bool
+}
+
 type Repo interface {
 	GetRef(ptr string) string
 	GetNode(nodeHash string) *Node
@@ -25,6 +33,41 @@ type Repo interface {
 	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
 	PutContent(content [][]byte) string
 	DeleteContent(contentHash string)
+}
+
+// SimpleSuperRepo turns any Repo into a SuperRepo by implementing the additional functionality in
+// the brain-deadest way possible.
+type SimpleSuperRepo struct {
+	Repo
+}
+
+func (r *SimpleSuperRepo) Dominates(a, b string) bool {
+	c := r.GetCommit(a)
+	if c == nil {
+		return false
+	}
+	used := make(map[string]bool)
+	q := c.Deps
+	for len(q) > 0 {
+		cur := q[0]
+		q = q[1:]
+		if cur == b {
+			return true
+		}
+		if used[cur] {
+			continue
+		}
+		used[cur] = true
+		curCommit := r.GetCommit(cur)
+		if curCommit == nil {
+			// TODO: this is really an error, could happen if repo is an errory thing, like on the network or whatever.
+			panic("balllllllls")
+		}
+		for _, dep := range curCommit.Deps {
+			q = append(q, dep)
+		}
+	}
+	return false
 }
 
 //       this may be doable by finding a consistent way to hash nodes.

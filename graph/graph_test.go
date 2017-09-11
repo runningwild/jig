@@ -474,6 +474,70 @@ func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
 	return s
 }
 
+func TestToposort(t *testing.T) {
+	Convey("Toposort works", t, func() {
+		Convey("on a very simple graph", func() {
+			g := map[string][]string{
+				"a": []string{"b", "c", "d"},
+				"b": []string{"d"},
+				"c": []string{"d"},
+				"d": []string{"e"},
+			}
+			t := graph.ToposortSubgraph(g)
+			So(len(t), ShouldEqual, 5)
+			r := make(map[string]int)
+			for i, v := range t {
+				r[v] = i
+			}
+			So(r["a"], ShouldBeLessThan, r["b"])
+			So(r["a"], ShouldBeLessThan, r["c"])
+			So(r["a"], ShouldBeLessThan, r["d"])
+			So(r["a"], ShouldBeLessThan, r["e"])
+			So(r["b"], ShouldBeLessThan, r["d"])
+			So(r["b"], ShouldBeLessThan, r["e"])
+			So(r["c"], ShouldBeLessThan, r["d"])
+			So(r["c"], ShouldBeLessThan, r["e"])
+			So(r["d"], ShouldBeLessThan, r["e"])
+		})
+		Convey("on a disjoint graph", func() {
+			g := map[string][]string{
+				"a": []string{"b", "c", "d"},
+				"b": []string{"d"},
+				"c": []string{"d"},
+				"d": []string{"e"},
+				"A": []string{"B", "C", "D"},
+				"B": []string{"D"},
+				"C": []string{"D"},
+				"D": []string{"E"},
+			}
+			t := graph.ToposortSubgraph(g)
+			So(len(t), ShouldEqual, 10)
+			r := make(map[string]int)
+			for i, v := range t {
+				r[v] = i
+			}
+			So(r["a"], ShouldBeLessThan, r["b"])
+			So(r["a"], ShouldBeLessThan, r["c"])
+			So(r["a"], ShouldBeLessThan, r["d"])
+			So(r["a"], ShouldBeLessThan, r["e"])
+			So(r["b"], ShouldBeLessThan, r["d"])
+			So(r["b"], ShouldBeLessThan, r["e"])
+			So(r["c"], ShouldBeLessThan, r["d"])
+			So(r["c"], ShouldBeLessThan, r["e"])
+			So(r["d"], ShouldBeLessThan, r["e"])
+			So(r["A"], ShouldBeLessThan, r["B"])
+			So(r["A"], ShouldBeLessThan, r["C"])
+			So(r["A"], ShouldBeLessThan, r["D"])
+			So(r["A"], ShouldBeLessThan, r["E"])
+			So(r["B"], ShouldBeLessThan, r["D"])
+			So(r["B"], ShouldBeLessThan, r["E"])
+			So(r["C"], ShouldBeLessThan, r["D"])
+			So(r["C"], ShouldBeLessThan, r["E"])
+			So(r["D"], ShouldBeLessThan, r["E"])
+		})
+	})
+}
+
 // TODO: Need to test the following kinds of invalid commits at the very least:
 // - Edges that create cycles.
 // - An edge from nodes in one file to nodes in another file, without corresponding nodes from the other
