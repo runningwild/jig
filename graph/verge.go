@@ -387,37 +387,52 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 	}
 }
 
+// I think this is unnecessary.  The purpose of this was to decide how to group commits when there
+// were multiple commits involved in a conflict.  I think really the right thing to do is keep track
+// of the last unconflicted frontier and use that as one view, and each individual other commit as
+// another view.
 // GetDominatedGroups constructs one or more groups from the commits contained in conflicts such
 // that each group is a maximal set of commits that cannot conflict.  Each group is specified as a
 // []string and the commits in it are ordered topologically with the most dominant commit first.
-func GetDominatedGroups(r SuperRepo, f Frontier, conflicts map[string]bool) [][]string {
-	forward := make(map[string][]string)
-	reverse := make(map[string][]string)
-	for c := range conflicts {
-		forward[c], reverse[c] = nil, nil
-	}
-	for a := range conflicts {
-		for b := range conflicts {
-			if a == b {
-				continue
-			}
-			if r.Dominates(a, b) {
-				forward[a] = append(forward[a], b)
-				reverse[b] = append(reverse[b], a)
-			}
-		}
-	}
-	used := make(map[string]bool)
-	var groups [][]string
-	for c := range reverse {
-		if len(c) > 0 || used[c] {
-			continue
-		}
-		used[c] = true
+// func GetDominatedGroups(r SuperRepo, f Frontier, conflicts map[string]bool) [][]string {
+// 	rdeps := r.RDeps(conflicts)
+// 	var remove []string
+// 	for c := range rdeps {
+// 		if !f.Observes(c) {
+// 			remove = append(remove, c)
+// 		}
+// 	}
+// 	for _, c := range remove {
+// 		delete(rdeps, c)
+// 	}
 
-	}
-	return groups
-}
+// 	g := make(map[string][]string)
+// 	for c := range conflicts {
+// 		g[c] = r.GetCommit(c).Deps
+// 	}
+// 	for c := range rdeps {
+// 		g[c] = r.GetCommit(c).Deps
+// 	}
+// 	var groups [][]string
+// 	dest := make(map[string]int)
+// 	fmt.Printf("Toposort of %v\n", g)
+// 	fmt.Printf("%v\n", ToposortSubgraph(g))
+// 	for _, c := range ToposortSubgraph(g) {
+// 		if _, ok := g[c]; !ok {
+// 			continue
+// 		}
+// 		n, ok := dest[c]
+// 		if ok {
+// 			groups[n] = append(groups[n], c)
+// 			continue
+// 		}
+// 		groups = append(groups, []string{c})
+// 		for _, d := range r.GetCommit(c).Deps {
+// 			dest[d] = len(groups) - 1
+// 		}
+// 	}
+// 	return groups
+// }
 
 func ToposortSubgraph(g map[string][]string) []string {
 	heads := make(map[string]bool)
@@ -456,58 +471,116 @@ func topohelper(g map[string][]string, cur string, used map[string]bool, res *[]
 // TODO: this currently can returns version that, while self-consistent, put A and B in separate version
 // when A depends on B, which is a bit odd.  To fix this we need to be able to go from a set of commits
 // to a subgraph that shows their transitive relationships.
-func ReadVersions(r Repo, f Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
-	used := make(map[string]bool)
+// If prev is set it must be a frontier at which there is no conflict between start and end.
+func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
 	var versions []Version
-	for len(conflicts) > 0 {
-		var buf [][]byte
-		hit := make(map[string]bool)
-		n := r.GetNode(start)
-		if n == nil {
-			return nil, fmt.Errorf("failed to find start node %s", start)
+	used := make(map[string]bool)
+	if prev != nil {
+		allCommits := make(map[string]bool)
+		data, err := ReadVersion(r, prev, start, end, join, allCommits)
+		if err != nil {
+			return nil, err
 		}
-		prev := n
-		fmt.Printf("End is %s\n", nodeContent(r, end))
-		fmt.Printf("Pathing from %s to %s\n", start, end)
-		content := r.GetContent(n.Content)
-		if len(content) < 1 {
-			return nil, fmt.Errorf("start node had no content")
-		}
-		buf = append(buf, content[len(content)-1])
-		for n.Head != end {
-			for i := len(n.Out) - 1; i >= 0; i-- {
-				e := n.Out[i]
-				if !f.Observes(e.Commit) || used[e.Commit] {
-					continue
-				}
-				if conflicts[e.Commit] {
-					hit[e.Commit] = true
-				}
-				n = r.GetNode(e.Node)
-				if n == nil {
-					return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
-				}
-				break
-			}
-			if n == prev {
-				return nil, fmt.Errorf("failed to find an outgoing edge from %s", prev.Head)
-			}
-			fmt.Printf("%s\n", nodeContent(r, n.Head))
-			buf = append(buf, r.GetContent(n.Content)...)
-			prev = n
-		}
-		versions = append(versions, Version{
-			Data:    bytes.Join(buf, join),
-			Commits: hit,
-		})
-		for c := range hit {
+		commits := make(map[string]bool)
+		for c := range allCommits {
 			if _, ok := conflicts[c]; ok {
-				used[c] = true
-				delete(conflicts, c)
+				commits[c] = true
 			}
 		}
+		versions = append(versions, Version{Commits: commits, Data: data})
+		used = commits
+	}
+
+	for c := range conflicts {
+		if used[c] {
+			continue
+		}
+		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: conflicts}, add: map[string]bool{c: true}}
+		data, err := ReadVersion(r, next, start, end, join, nil)
+		if err != nil {
+			return nil, err
+		}
+		versions = append(versions, Version{Commits: map[string]bool{c: true}, Data: data})
 	}
 	return versions, nil
+}
+
+type addToFrontier struct {
+	f   Frontier
+	add map[string]bool
+}
+
+func (f *addToFrontier) Observes(commit string) bool {
+	return f.f.Observes(commit) || f.add[commit]
+}
+
+type removeFromFrontier struct {
+	f      Frontier
+	remove map[string]bool
+}
+
+func (f *removeFromFrontier) Observes(commit string) bool {
+	return f.f.Observes(commit) && !f.remove[commit]
+}
+
+// commits is optional, if set it will get filled with all commits touched between start and end.
+// Reads the data between start and end, including the last chunk of start, if any, and the first
+// chunk of end, if any.
+func ReadVersion(r Repo, f Frontier, start, end string, join []byte, commits map[string]bool) ([]byte, error) {
+	var buf [][]byte
+	n := r.GetNode(start)
+	if n == nil {
+		return nil, fmt.Errorf("failed to find start node %s", start)
+	}
+	if len(n.In) == 0 && len(n.Out) == 0 {
+		return nil, fmt.Errorf("start node was invalid, it had no input or output edges")
+	}
+	if start == end {
+		return nil, fmt.Errorf("start and end were the same node")
+	}
+	prev := n
+	fmt.Printf("End is %s\n", nodeContent(r, end))
+	fmt.Printf("Pathing from %s to %s\n", start, end)
+
+	// Only take the last chunk from the starting node.
+	if content := r.GetContent(n.Content); len(content) > 0 {
+		buf = append(buf, content[len(content)-1])
+	}
+
+	for {
+		fmt.Printf("On node %q\n", n.Head)
+		for i := len(n.Out) - 1; i >= 0; i-- {
+			e := n.Out[i]
+			if !f.Observes(e.Commit) {
+				continue
+			}
+			if commits != nil {
+				commits[n.Out[0].Commit] = true
+			}
+			n = r.GetNode(e.Node)
+			if n == nil {
+				return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
+			}
+			break
+		}
+		// TODO: check for cycles as we traverse
+		if n == prev {
+			return nil, fmt.Errorf("failed to find an outgoing edge from %s", prev.Head)
+		}
+		if n.Head == end {
+			break
+		}
+		fmt.Printf("%s\n", nodeContent(r, n.Head))
+		buf = append(buf, r.GetContent(n.Content)...)
+		prev = n
+	}
+
+	// Only take the first chunk from the end node.
+	if content := r.GetContent(n.Content); len(content) > 0 {
+		buf = append(buf, content[0])
+	}
+
+	return bytes.Join(buf, join), nil
 }
 
 type Version struct {

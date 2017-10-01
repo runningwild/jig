@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sort"
 
 	skein512 "github.com/runningwild/skein/hash/512"
 )
@@ -15,6 +16,11 @@ type SuperRepo interface {
 
 	// Dominates returns true iff a dominates b.
 	Dominates(a, b string) bool
+
+	// RDeps returns a list of all commits that depend on any of the specified commits.
+	// TODO: Maybe better to take a Frontier - that would allow faster queries when looking at a
+	// commit from a long time ago.
+	RDeps(cs map[string]bool) map[string]bool
 }
 
 type Repo interface {
@@ -22,6 +28,13 @@ type Repo interface {
 	GetNode(nodeHash string) *Node
 	GetContent(contentHash string) [][]byte
 	GetCommit(commitHash string) *Commit
+
+	// List methods all fill out the given slice with as many hashes as possible of the specified,
+	// it returns the number of elements filled.
+	ListRefs(start string, refs []string) (n int)
+	ListNodes(start string, nodes []string) (n int)
+	ListContents(start string, contents []string) (n int)
+	ListCommits(start string, commits []string) (n int)
 
 	StartTransaction()
 	EndTransaction() error
@@ -36,7 +49,7 @@ type Repo interface {
 }
 
 // SimpleSuperRepo turns any Repo into a SuperRepo by implementing the additional functionality in
-// the brain-deadest way possible.
+// the brain-deadest way possible.  This is reasonable for testing.
 type SimpleSuperRepo struct {
 	Repo
 }
@@ -68,6 +81,27 @@ func (r *SimpleSuperRepo) Dominates(a, b string) bool {
 		}
 	}
 	return false
+}
+
+func (r *SimpleSuperRepo) RDeps(cs map[string]bool) map[string]bool {
+	rdeps := make(map[string]bool)
+	buf := make([]string, 2)
+	fmt.Printf("Rdeps on %v\n", cs)
+	for n := r.ListCommits("", buf); n > 0; n = r.ListCommits(buf[n-1], buf) {
+		fmt.Printf("Listing commits...\n")
+		for _, c := range buf {
+			fmt.Printf("  commit: %q\n", c)
+		}
+		for _, d := range buf[0:n] {
+			for c := range cs {
+				if r.Dominates(d, c) {
+					rdeps[d] = true
+					break
+				}
+			}
+		}
+	}
+	return rdeps
 }
 
 //       this may be doable by finding a consistent way to hash nodes.
@@ -765,6 +799,66 @@ func (r *testRepo) GetCommit(commitHash string) *Commit {
 }
 func (r *testRepo) GetContent(contentHash string) [][]byte {
 	return r.Content[contentHash]
+}
+func (r *testRepo) ListRefs(start string, refs []string) (n int) {
+	var allKeys []string
+	for key := range r.Refs {
+		allKeys = append(allKeys, key)
+	}
+	sort.Strings(allKeys)
+	for len(allKeys) > 0 && allKeys[0] <= start {
+		allKeys = allKeys[1:]
+	}
+	copy(refs, allKeys)
+	if len(refs) > len(allKeys) {
+		return len(allKeys)
+	}
+	return len(refs)
+}
+func (r *testRepo) ListNodes(start string, nodes []string) (n int) {
+	var allKeys []string
+	for key := range r.Nodes {
+		allKeys = append(allKeys, key)
+	}
+	sort.Strings(allKeys)
+	for len(allKeys) > 0 && allKeys[0] <= start {
+		allKeys = allKeys[1:]
+	}
+	copy(nodes, allKeys)
+	if len(nodes) > len(allKeys) {
+		return len(allKeys)
+	}
+	return len(nodes)
+}
+func (r *testRepo) ListContents(start string, contents []string) (n int) {
+	var allKeys []string
+	for key := range r.Content {
+		allKeys = append(allKeys, key)
+	}
+	sort.Strings(allKeys)
+	for len(allKeys) > 0 && allKeys[0] <= start {
+		allKeys = allKeys[1:]
+	}
+	copy(contents, allKeys)
+	if len(contents) > len(allKeys) {
+		return len(allKeys)
+	}
+	return len(contents)
+}
+func (r *testRepo) ListCommits(start string, commits []string) (n int) {
+	var allKeys []string
+	for key := range r.Commits {
+		allKeys = append(allKeys, key)
+	}
+	sort.Strings(allKeys)
+	for len(allKeys) > 0 && allKeys[0] <= start {
+		allKeys = allKeys[1:]
+	}
+	copy(commits, allKeys)
+	if len(commits) > len(allKeys) {
+		return len(allKeys)
+	}
+	return len(commits)
 }
 func (r *testRepo) StartTransaction() {
 	if r.Transactions != 0 {

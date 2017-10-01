@@ -323,7 +323,7 @@ func TestVerge(t *testing.T) {
 				So(conflictsList, ShouldContain, c2.Hash())
 				So(conflictsList, ShouldContain, c2x.Hash())
 				So(conflictsList, ShouldNotContain, c4.Hash())
-				versions, err := graph.ReadVersions(r, f, r.GetRef(start), end, conflicts, []byte("."))
+				versions, err := graph.ReadVersions(r, f, nil, r.GetRef(start), end, conflicts, []byte("."))
 				So(err, ShouldBeNil)
 				So(versions, ShouldNotBeNil)
 				So(len(versions), ShouldEqual, 3)
@@ -474,6 +474,14 @@ func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
 	return s
 }
 
+func explicitFrontierStrings(commits ...string) simpleFrontier {
+	s := make(simpleFrontier)
+	for _, c := range commits {
+		s[c] = true
+	}
+	return s
+}
+
 func TestToposort(t *testing.T) {
 	Convey("Toposort works", t, func() {
 		Convey("on a very simple graph", func() {
@@ -536,6 +544,97 @@ func TestToposort(t *testing.T) {
 			So(r["D"], ShouldBeLessThan, r["E"])
 		})
 	})
+}
+
+// func TestDominatedGroups(t *testing.T) {
+// 	Convey("DominatedGroups", t, func() {
+// 		Convey("works on simple repos", func() {
+// 			r := commitOnlyRepo{
+// 				commits: map[string][]string{
+// 					"a": {"b", "c"},
+// 					"b": {},
+// 					"c": {},
+// 				},
+// 			}
+// 			ssr := &graph.SimpleSuperRepo{&r}
+// 			commits := make([]string, 1000)
+// 			numCommits := ssr.ListCommits("", commits)
+// 			So(numCommits, ShouldEqual, 3)
+// 			commits = commits[0:numCommits]
+// 			So(commits, ShouldContain, "a")
+// 			So(commits, ShouldContain, "b")
+// 			So(commits, ShouldContain, "c")
+// 			rdeps := ssr.RDeps(setOfHashes("b", "c"))
+// 			So(len(rdeps), ShouldEqual, 1)
+// 			dgs := graph.GetDominatedGroups(ssr, allFrontier{}, setOfHashes("a"))
+// 			So(len(dgs), ShouldEqual, 1)
+// 		})
+// 		Convey("works on more complicated repos", func() {
+// 			r := commitOnlyRepo{
+// 				commits: map[string][]string{
+// 					"a": {"b", "c", "d"},
+// 					"b": {},
+// 					"c": {"e"},
+// 					"d": {"e", "f"},
+// 					"e": {"g"},
+// 					"f": {"g"},
+// 					"g": {},
+// 					"h": {"i", "j", "k"},
+// 					"i": {"l"},
+// 					"j": {},
+// 					"k": {},
+// 					"l": {},
+// 				},
+// 			}
+// 			ssr := &graph.SimpleSuperRepo{&r}
+// 			dgs := graph.GetDominatedGroups(ssr, allFrontier{}, setOfHashes("c", "d"))
+// 			t.Errorf("%v", dgs)
+// 			So(len(dgs), ShouldEqual, 2)
+// 		})
+// 	})
+// }
+
+func setOfHashes(ss ...string) map[string]bool {
+	m := make(map[string]bool)
+	for _, s := range ss {
+		m[s] = true
+	}
+	return m
+}
+
+type allFrontier struct{}
+
+func (allFrontier) Observes(string) bool { return true }
+
+type commitOnlyRepo struct {
+	graph.Repo
+	commits map[string][]string
+}
+
+func (r *commitOnlyRepo) GetCommit(c string) *graph.Commit {
+	deps := r.commits[c]
+	if deps == nil {
+		return nil
+	}
+	return &graph.Commit{
+		Deps: deps,
+	}
+}
+
+func (r *commitOnlyRepo) ListCommits(start string, commits []string) (n int) {
+	var allKeys []string
+	for key := range r.commits {
+		allKeys = append(allKeys, key)
+	}
+	sort.Strings(allKeys)
+	for len(allKeys) > 0 && allKeys[0] <= start {
+		allKeys = allKeys[1:]
+	}
+	copy(commits, allKeys)
+	if len(commits) > len(allKeys) {
+		return len(allKeys)
+	}
+	return len(commits)
 }
 
 // TODO: Need to test the following kinds of invalid commits at the very least:
