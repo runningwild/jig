@@ -1,27 +1,13 @@
 package graph
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash"
-	"io"
-	"sort"
 
 	skein512 "github.com/runningwild/skein/hash/512"
 )
-
-// SuperRepo is like a Repo but it contains functionality that can be implemented on top of Repo.
-type SuperRepo interface {
-	Repo
-
-	// Dominates returns true iff a dominates b.
-	Dominates(a, b string) bool
-
-	// RDeps returns a list of all commits that depend on any of the specified commits.
-	// TODO: Maybe better to take a Frontier - that would allow faster queries when looking at a
-	// commit from a long time ago.
-	RDeps(cs map[string]bool) map[string]bool
-}
 
 type Repo interface {
 	GetRef(ptr string) string
@@ -47,99 +33,6 @@ type Repo interface {
 	PutContent(content [][]byte) string
 	DeleteContent(contentHash string)
 }
-
-// SimpleSuperRepo turns any Repo into a SuperRepo by implementing the additional functionality in
-// the brain-deadest way possible.  This is reasonable for testing.
-type SimpleSuperRepo struct {
-	Repo
-}
-
-func (r *SimpleSuperRepo) Dominates(a, b string) bool {
-	c := r.GetCommit(a)
-	if c == nil {
-		return false
-	}
-	used := make(map[string]bool)
-	q := c.Deps
-	for len(q) > 0 {
-		cur := q[0]
-		q = q[1:]
-		if cur == b {
-			return true
-		}
-		if used[cur] {
-			continue
-		}
-		used[cur] = true
-		curCommit := r.GetCommit(cur)
-		if curCommit == nil {
-			// TODO: this is really an error, could happen if repo is an errory thing, like on the network or whatever.
-			panic("balllllllls")
-		}
-		for _, dep := range curCommit.Deps {
-			q = append(q, dep)
-		}
-	}
-	return false
-}
-
-func (r *SimpleSuperRepo) RDeps(cs map[string]bool) map[string]bool {
-	rdeps := make(map[string]bool)
-	buf := make([]string, 2)
-	fmt.Printf("Rdeps on %v\n", cs)
-	for n := r.ListCommits("", buf); n > 0; n = r.ListCommits(buf[n-1], buf) {
-		fmt.Printf("Listing commits...\n")
-		for _, c := range buf {
-			fmt.Printf("  commit: %q\n", c)
-		}
-		for _, d := range buf[0:n] {
-			for c := range cs {
-				if r.Dominates(d, c) {
-					rdeps[d] = true
-					break
-				}
-			}
-		}
-	}
-	return rdeps
-}
-
-//       this may be doable by finding a consistent way to hash nodes.
-//       A new edge will either point to a new node, the head of an existing node, or the body of an
-//       existing node.
-//       - New Node: Easy, it's right there.
-//       - Existing node head: If we can find a consistent hash, easy, otherwise maybe hard.
-//       - Existing node body: As easy as the above, with additional information about how far into the node.
-//
-//       Maybe an edge can provide the previous node (must be part of a declared dependency), and then say
-//       go to where that edge points and then go forward N more nodes.  This could work as long as there
-//       is a simple (i.e. O(1)) way to traverse nodes that have been split in a way that is consistent with
-//       the final node this is referring to.
-//		 An edge is defined by the commit that added it, the source node, and the destination node.
-//       Define a node by the first edge that pointed to it.
-//       src -> A -> B -> C -> D -> snk
-//       this will have a single node object storing ABCD, the edges are implicit, but the first one, src->A, is defined
-//       by the filename (foo.txt, say) and the commit (C:0).
-//       C:1 adds an edge A -> XY -> B  (insert 'X' between A and B)
-//       We have to split ABCD into A and BCD.  A's incoming edges don't change, BCD's outgoing edges don't change.
-//       A must get an outgoing edge to BCD that came from commit C:0, it was there before, it was just implicit.
-//       Now if C:2 adds an edge B -> D (delete 'C') we have to split BCD into B, C, and D.
-//       C:2 only depends on C:0, not C:1, so we can't use nodes created by C:1 when defining C:2.
-//       how do we choose the appropriate edges to use?  From the edge we want to add, B->D, we can go backward using
-//       only edges observable by the frontier of the deps for this commit.  When we would go backward across an edge
-//       visible this way we know that edge would be part ... wait!  we'd go backward across A->B, which is part of C:0,
-//       but we can't use that one, because someone only has it if they broke ABCD into A and BCD.  This is a mess!!
-//       Wait again!  It's ok, we know which edges were added as part of any given commit, we can call those primary
-//       edges, and implicit ones that are added later can be secondary edges.  If we go backward until we cross a
-//       primary edge we should be ok.  So the new commit can say 'find edge X, follow it and go N more nodes'.  We
-//       don't need to know the frontier for this because any secondary edge.  This still requires the person creating
-//       the commit to be able to compute the appropriate transitive frontier, or does it?  From any edge we want to add
-//       if we trace backward to the first primary initial edge, *that* edge defined the content we're currently in, so
-//       that's when we depend on.  WOOO!!!  Primary Initial: Primary means it was added as part of a commit, Initial
-//       means that it is listed first in the incoming edges of a node.  Trace backward to the PI edge, measure the
-//       distance along the way.  When applying that commit you can go to the edge and walk forward, only using that
-//       edge's commit's edges.
-//
 
 // SplitNode takes a node and a depth and replaces that node with two nodes, split at the specified
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
@@ -232,201 +125,131 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	return tail0, head1, nil
 }
 
-func GetPath(r Repo, f Frontier, src, dst string) ([]*Node, error) {
-	srcNode := r.GetNode(src)
-	dstNode := r.GetNode(dst)
-	if srcNode == nil {
-		return nil, fmt.Errorf("src node not found")
-	}
-	if dstNode == nil {
-		return nil, fmt.Errorf("dst node not found")
-	}
-	if !f.Observes(srcNode.Out[0].Commit) {
-		return nil, fmt.Errorf("file not found")
-	}
-	cur := srcNode
-	var path []*Node
-	for cur.Head != dst {
-		path = append(path, cur)
-		var out *Edge
-		for i := len(cur.Out) - 1; i >= 0; i-- {
-			if f.Observes(cur.Out[i].Commit) {
-				out = &cur.Out[i]
-				break
+// TODO: this currently can returns version that, while self-consistent, put A and B in separate version
+// when A depends on B, which is a bit odd.  To fix this we need to be able to go from a set of commits
+// to a subgraph that shows their transitive relationships.
+// If prev is set it must be a frontier at which there is no conflict between start and end.
+func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
+	var versions []Version
+	used := make(map[string]bool)
+	if prev != nil {
+		allCommits := make(map[string]bool)
+		data, err := ReadVersion(r, prev, start, end, join, allCommits)
+		if err != nil {
+			return nil, err
+		}
+		commits := make(map[string]bool)
+		for c := range allCommits {
+			if _, ok := conflicts[c]; ok {
+				commits[c] = true
 			}
 		}
-		if out == nil {
-			return nil, fmt.Errorf("found an invalid terminal node")
-		}
-		cur = r.GetNode(out.Node)
-		if cur == nil {
-			return nil, fmt.Errorf("unattached edge")
-		}
+		versions = append(versions, Version{Commits: commits, Data: data})
+		used = commits
 	}
-	path = append(path, dstNode)
-	return path, nil
+
+	for c := range conflicts {
+		if used[c] {
+			continue
+		}
+		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: conflicts}, add: map[string]bool{c: true}}
+		data, err := ReadVersion(r, next, start, end, join, nil)
+		if err != nil {
+			return nil, err
+		}
+		versions = append(versions, Version{Commits: map[string]bool{c: true}, Data: data})
+	}
+	return versions, nil
 }
 
-func PrintPath(r Repo, f Frontier, src, dst string, w io.Writer, sep string) error {
-	path, err := GetPath(r, f, src, dst)
-	if err != nil {
-		return err
-	}
-	first := true
-	for _, n := range path {
-		c := r.GetContent(n.Content)
-		for _, line := range c {
-			if !first {
-				if _, err := w.Write([]byte(sep)); err != nil {
-					return err
-				}
-			}
-			first = false
-			if _, err := w.Write(line); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+type addToFrontier struct {
+	f   Frontier
+	add map[string]bool
 }
 
-func PrintFile(r Repo, path string, f Frontier, w io.Writer) error {
-	n := r.GetNode("src:" + path)
+func (f *addToFrontier) Observes(commit string) bool {
+	return f.f.Observes(commit) || f.add[commit]
+}
+
+type removeFromFrontier struct {
+	f      Frontier
+	remove map[string]bool
+}
+
+func (f *removeFromFrontier) Observes(commit string) bool {
+	return f.f.Observes(commit) && !f.remove[commit]
+}
+
+// commits is optional, if set it will get filled with all commits touched between start and end.
+// Reads the data between start and end, including the last chunk of start, if any, and the first
+// chunk of end, if any.
+func ReadVersion(r Repo, f Frontier, start, end string, join []byte, commits map[string]bool) ([]byte, error) {
+	var buf [][]byte
+	n := r.GetNode(start)
 	if n == nil {
-		return fmt.Errorf("file not found")
+		return nil, fmt.Errorf("failed to find start node %s", start)
+	}
+	if len(n.In) == 0 && len(n.Out) == 0 {
+		return nil, fmt.Errorf("start node was invalid, it had no input or output edges")
+	}
+	if start == end {
+		return nil, fmt.Errorf("start and end were the same node")
+	}
+	prev := n
+	fmt.Printf("End is %s\n", nodeContent(r, end))
+	fmt.Printf("Pathing from %s to %s\n", start, end)
+
+	// Only take the last chunk from the starting node.
+	if content := r.GetContent(n.Content); len(content) > 0 {
+		buf = append(buf, content[len(content)-1])
 	}
 
-	if n.Out[len(n.Out)-1].Node == "0" {
-		return fmt.Errorf("file was deleted")
+	for {
+		fmt.Printf("On node %q\n", n.Head)
+		for i := len(n.Out) - 1; i >= 0; i-- {
+			e := n.Out[i]
+			if !f.Observes(e.Commit) {
+				continue
+			}
+			if commits != nil {
+				commits[n.Out[0].Commit] = true
+			}
+			n = r.GetNode(e.Node)
+			if n == nil {
+				return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
+			}
+			break
+		}
+		// TODO: check for cycles as we traverse
+		if n == prev {
+			return nil, fmt.Errorf("failed to find an outgoing edge from %s", prev.Head)
+		}
+		if n.Head == end {
+			break
+		}
+		// fmt.Printf("%s\n", nodeContent(r, n.Head))
+		buf = append(buf, r.GetContent(n.Content)...)
+		prev = n
 	}
 
-	first := true
-	snk := fmt.Sprintf("snk:%s", path)
-	for n.Out[len(n.Out)-1].Node != snk {
-		prev := n.Out[len(n.Out)-1].Node
-		n = r.GetNode(n.Out[len(n.Out)-1].Node)
-		if n == nil {
-			return fmt.Errorf("Failed to find node %q\n", prev)
-		}
-		content := r.GetContent(n.Content)
-		for _, line := range content {
-			if !first {
-				if _, err := w.Write([]byte{'\n'}); err != nil {
-					return err
-				}
-			}
-			first = false
-			if _, err := w.Write(line); err != nil {
-				return err
-			}
-		}
+	// Only take the first chunk from the end node.
+	if content := r.GetContent(n.Content); len(content) > 0 {
+		buf = append(buf, content[0])
 	}
-	return nil
+
+	return bytes.Join(buf, join), nil
 }
 
-// func Main() {
-// 	r := MakeFakeRepo()
-
-// 	content := bytes.Split([]byte(strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n")), []byte("\n"))
-// 	c0 := &Commit{
-// 		Deps:     nil,
-// 		EdgeRefs: []EdgeRef{{Src: 0, Dst: -1}},
-// 		Contents: []NewContent{
-// 			{
-// 				Path:    "foo.txt",
-// 				Form:    FormText,
-// 				Content: content,
-// 			},
-// 		},
-// 	}
-// 	if err := Apply(r, c0); err != nil {
-// 		fmt.Printf("failed to apply first commit: %v", err)
-// 		return
-// 	}
-
-// 	content2 := bytes.Split([]byte(strings.Join([]string{"BRAVO", "CHARLIE"}, "\n")), []byte("\n"))
-// 	// for _, n := range r.nodes {
-// 	// 	fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-// 	// 	fmt.Printf("Out: %v\n", n.Out)
-// 	// 	fmt.Printf("In: %v\n", n.In)
-// 	// 	fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-// 	// }
-// 	fmt.Printf("Printing 'foo.txt'----------\n")
-// 	PrintFile(r, "foo.txt", nil, os.Stdout)
-// 	fmt.Printf("----------------------------\n\n\n")
-
-// 	// This commit capitalizes the lines with 'bravo' and 'charlie'
-// 	c1 := &Commit{
-// 		Deps: []string{c0.Hash()},
-// 		EdgeRefs: []EdgeRef{
-// 			{Src: 0, Dst: 2},
-// 			{Src: 2, Dst: 1},
-// 		},
-// 		NodeRefs: []NodeRef{
-// 			{Node: "src:foo.txt", Depth: 2}, // 'alpha'
-// 			{Node: "src:foo.txt", Depth: 5}, // 'delta'
-// 		},
-// 		Contents: []NewContent{
-// 			{Content: content2},
-// 		},
-// 	}
-// 	fmt.Printf("Applying commit %q...\n", c1.Hash())
-// 	if err := Apply(r, c1); err != nil {
-// 		fmt.Printf("Failed to apply commit: %v", err)
-// 		return
-// 	}
-// 	fmt.Printf("Printing 'foo.txt'----------\n")
-// 	PrintFile(r, "foo.txt", nil, os.Stdout)
-// 	fmt.Printf("----------------------------\n")
-
-// 	fmt.Printf("Starting with %q\n", "src:foo.txt")
-// 	fmt.Printf("Now to %q\n", r.nodes["src:foo.txt"].Out[0].Node)
-// 	fmt.Printf("Now to %q\n", r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Node)
-// 	fmt.Printf(" on commit %q\n", r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Commit)
-
-// 	// This should be the node with the capitalized text
-// 	// r.nodes["src:foo.txt"].Out[1].Node
-// 	c2 := &Commit{
-// 		Deps: []string{c0.Hash(), c1.Hash()},
-// 		EdgeRefs: []EdgeRef{
-// 			{Src: 0, Dst: 1},
-// 		},
-// 		NodeRefs: []NodeRef{
-// 			{
-// 				Node:  r.nodes[r.nodes["src:foo.txt"].Out[0].Node].Out[1].Node,
-// 				Depth: 2,
-// 			},
-// 			{
-// 				Node:  "src:foo.txt",
-// 				Depth: 6,
-// 			},
-// 		},
-// 		Contents: nil,
-// 	}
-
-// 	for _, n := range r.nodes {
-// 		fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-// 		fmt.Printf("Out: %v\n", n.Out)
-// 		fmt.Printf("In: %v\n", n.In)
-// 		fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-// 		fmt.Printf("\n\n\n\n\n")
-// 	}
-
-// 	fmt.Printf("Applying a commit...\n")
-// 	if err := Apply(r, c2); err != nil {
-// 		fmt.Printf("Failed to apply commit: %v", err)
-// 		return
-// 	}
-// 	fmt.Printf("Printing 'foo.txt'----------\n")
-// 	PrintFile(r, "foo.txt", nil, os.Stdout)
-// 	fmt.Printf("----------------------------\n")
-// }
+type Version struct {
+	Data    []byte
+	Commits map[string]bool
+}
 
 func jigStandardHasher() hash.Hash {
 	return skein512.NewHash512(24)
 }
 
-func hashContent(content [][]byte) string {
+func HashContent(content [][]byte) string {
 	h := jigStandardHasher()
 	for _, line := range content {
 		length := uint32(len(line))
@@ -490,7 +313,7 @@ func Apply(r Repo, c *Commit) error {
 		}
 		n := &Node{
 			Form:    nc.Form,
-			Content: hashContent(nc.Content), // Content hash
+			Content: HashContent(nc.Content), // Content hash
 			Count:   len(nc.Content),
 		}
 
@@ -648,7 +471,7 @@ func (c *Commit) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.Contents)))
 	for _, c := range c.Contents {
-		hash := hashContent(c.Content)
+		hash := HashContent(c.Content)
 		binary.Write(h, binary.LittleEndian, uint32(len(hash)))
 		h.Write([]byte(hash))
 	}
@@ -768,128 +591,3 @@ const (
 	// FormBinary is a binary file.  TODO: Need to define the chunking algorithm
 //	FormBinary
 )
-
-////// omgggggg
-
-type testRepo struct {
-	Nodes        map[string]*Node
-	Commits      map[string]*Commit
-	Content      map[string][][]byte
-	Refs         map[string]string
-	Transactions int
-}
-
-func MakeFakeRepo() *testRepo {
-	return &testRepo{
-		Nodes:   make(map[string]*Node),
-		Commits: make(map[string]*Commit),
-		Content: make(map[string][][]byte),
-		Refs:    make(map[string]string),
-	}
-}
-
-func (r *testRepo) GetRef(ptr string) string {
-	return r.Refs[ptr]
-}
-func (r *testRepo) GetNode(nodeHash string) *Node {
-	return r.Nodes[nodeHash]
-}
-func (r *testRepo) GetCommit(commitHash string) *Commit {
-	return r.Commits[commitHash]
-}
-func (r *testRepo) GetContent(contentHash string) [][]byte {
-	return r.Content[contentHash]
-}
-func (r *testRepo) ListRefs(start string, refs []string) (n int) {
-	var allKeys []string
-	for key := range r.Refs {
-		allKeys = append(allKeys, key)
-	}
-	sort.Strings(allKeys)
-	for len(allKeys) > 0 && allKeys[0] <= start {
-		allKeys = allKeys[1:]
-	}
-	copy(refs, allKeys)
-	if len(refs) > len(allKeys) {
-		return len(allKeys)
-	}
-	return len(refs)
-}
-func (r *testRepo) ListNodes(start string, nodes []string) (n int) {
-	var allKeys []string
-	for key := range r.Nodes {
-		allKeys = append(allKeys, key)
-	}
-	sort.Strings(allKeys)
-	for len(allKeys) > 0 && allKeys[0] <= start {
-		allKeys = allKeys[1:]
-	}
-	copy(nodes, allKeys)
-	if len(nodes) > len(allKeys) {
-		return len(allKeys)
-	}
-	return len(nodes)
-}
-func (r *testRepo) ListContents(start string, contents []string) (n int) {
-	var allKeys []string
-	for key := range r.Content {
-		allKeys = append(allKeys, key)
-	}
-	sort.Strings(allKeys)
-	for len(allKeys) > 0 && allKeys[0] <= start {
-		allKeys = allKeys[1:]
-	}
-	copy(contents, allKeys)
-	if len(contents) > len(allKeys) {
-		return len(allKeys)
-	}
-	return len(contents)
-}
-func (r *testRepo) ListCommits(start string, commits []string) (n int) {
-	var allKeys []string
-	for key := range r.Commits {
-		allKeys = append(allKeys, key)
-	}
-	sort.Strings(allKeys)
-	for len(allKeys) > 0 && allKeys[0] <= start {
-		allKeys = allKeys[1:]
-	}
-	copy(commits, allKeys)
-	if len(commits) > len(allKeys) {
-		return len(allKeys)
-	}
-	return len(commits)
-}
-func (r *testRepo) StartTransaction() {
-	if r.Transactions != 0 {
-		panic("omg")
-	}
-	r.Transactions = 1
-}
-func (r *testRepo) EndTransaction() error {
-	if r.Transactions != 1 {
-		panic("zomg")
-	}
-	r.Transactions = 0
-	return nil
-}
-func (r *testRepo) PutRef(ptr, val string) {
-	r.Refs[ptr] = val
-}
-func (r *testRepo) PutNode(n *Node) {
-	r.Nodes[n.Head] = n
-}
-func (r *testRepo) PutCommit(c *Commit) {
-	r.Commits[c.Hash()] = c
-}
-func (r *testRepo) DeleteNode(nodeHash string) {
-	delete(r.Nodes, nodeHash)
-}
-func (r *testRepo) PutContent(content [][]byte) string {
-	hash := hashContent(content)
-	r.Content[hash] = content
-	return hash
-}
-func (r *testRepo) DeleteContent(contentHash string) {
-	delete(r.Content, contentHash)
-}

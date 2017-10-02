@@ -2,16 +2,14 @@ package graph_test
 
 import (
 	"bytes"
-	"os"
+	"fmt"
 	"sort"
-	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"fmt"
-
 	"github.com/runningwild/jig/graph"
+	"github.com/runningwild/jig/testutils"
 )
 
 func stringsToContent(ss ...string) [][]byte {
@@ -41,7 +39,7 @@ func TestNodeHashes(t *testing.T) {
 
 func TestSplitNode(t *testing.T) {
 	Convey("SplitNode", t, func() {
-		r := graph.MakeFakeRepo()
+		r := testutils.MakeFakeRepo()
 		sampleContent := stringsToContent("foo", "bar", "wing", "ding", "monkey", "ball", "")
 		contentHash := r.PutContent(sampleContent)
 		head, tail := graph.CalculateNodeHashes("commit-0", "path:sample.txt", graph.FormText, sampleContent)
@@ -103,7 +101,7 @@ func TestSplitNode(t *testing.T) {
 
 func TestVerge(t *testing.T) {
 	Convey("applied commits", t, func() {
-		r := graph.MakeFakeRepo()
+		r := testutils.MakeFakeRepo()
 		c0 := &graph.Commit{
 			Deps:     nil,
 			EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
@@ -276,7 +274,6 @@ func TestVerge(t *testing.T) {
 			graph.Apply(r, c4)
 
 			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c2x, c4), "foo.txt")
-			var c colorGraph
 			allConflicts := make(map[string]bool)
 			for n := v.Next()[0]; n != "snk:foo.txt"; n = v.Next()[0] {
 				v.Advance(n)
@@ -285,201 +282,169 @@ func TestVerge(t *testing.T) {
 						if c0 == c1 {
 							continue
 						}
-						c.addEdge(c0, c1)
 						allConflicts[c0] = true
 						allConflicts[c1] = true
 					}
 				}
 			}
 
-			Convey("stuff", func() {
+			Convey("advancement functions can find conflicts", func() {
+
+				// capitalizes 'bravo' and 'charlie'
+				c5a := &graph.Commit{
+					Deps: []string{c0.Hash()},
+					EdgeRefs: []graph.EdgeRef{
+						{Src: 0, Dst: 2},
+						{Src: 2, Dst: 1},
+					},
+					NodeRefs: []graph.NodeRef{
+						{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+						{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					},
+					Contents: []graph.NewContent{
+						{Content: stringsToContent("BRAVO", "CHARLIE")},
+					},
+				}
+				graph.Apply(r, c5a)
+
+				// capitalizes 'echo' and 'foxtrot'
+				c5b := &graph.Commit{
+					Deps: []string{c0.Hash()},
+					EdgeRefs: []graph.EdgeRef{
+						{Src: 0, Dst: 2},
+						{Src: 2, Dst: 1},
+					},
+					NodeRefs: []graph.NodeRef{
+						{Node: "src:foo.txt", Depth: 5}, // 'delta'
+						{Node: "src:foo.txt", Depth: 8}, // 'golf'
+					},
+					Contents: []graph.NewContent{
+						{Content: stringsToContent("ECHO", "FOXTROT")},
+					},
+				}
+				graph.Apply(r, c5b)
+
+				// munges 'bravo', 'charlie', and 'delta'
+				c6a := &graph.Commit{
+					Deps: []string{c0.Hash()},
+					EdgeRefs: []graph.EdgeRef{
+						{Src: 0, Dst: 2},
+						{Src: 2, Dst: 1},
+					},
+					NodeRefs: []graph.NodeRef{
+						{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+						{Node: "src:foo.txt", Depth: 6}, // 'echo'
+					},
+					Contents: []graph.NewContent{
+						{Content: stringsToContent("brAvO", "chArlIE", "dEltA")},
+					},
+				}
+				graph.Apply(r, c6a)
+
+				// munges 'echo' and 'foxtrot'
+				c6b := &graph.Commit{
+					Deps: []string{c0.Hash()},
+					EdgeRefs: []graph.EdgeRef{
+						{Src: 0, Dst: 2},
+						{Src: 2, Dst: 1},
+					},
+					NodeRefs: []graph.NodeRef{
+						{Node: "src:foo.txt", Depth: 6}, // 'echo'
+						{Node: "src:foo.txt", Depth: 8}, // 'golf'
+					},
+					Contents: []graph.NewContent{
+						{Content: stringsToContent("fOxtrOt")},
+					},
+				}
+				graph.Apply(r, c6b)
+
 				fmt.Printf("c0(%s): %s\n", c0.Hash(), "all the stuff")
-				fmt.Printf("c1(%s): %s\n", c1.Hash(), "CHARLIE.DELTA.ECHO.FOXTROT")
-				fmt.Printf("c2(%s): %s\n", c2.Hash(), "buttons.the.buttonsball")
-				fmt.Printf("c2x(%s): %s\n", c2x.Hash(), "BUTTONS.THE.BUTTONSBALL")
-				fmt.Printf("c4(%s): %s\n", c4.Hash(), "delete hotel")
+				fmt.Printf("c5a(%s): %s\n", c5a.Hash(), "BRAVO.CHARLIE")
+				fmt.Printf("c5b(%s): %s\n", c5b.Hash(), "ECHO.FOXTROT")
+				fmt.Printf("c6a(%s): %s\n", c6a.Hash(), "brAvO.chArlIE.dEltA")
+				fmt.Printf("c6b(%s): %s\n", c6b.Hash(), "fOxtrOt")
 				fmt.Printf("Advancing Verge\n")
-				f := explicitFrontier(c0, c1, c2, c2x, c4)
-				v := graph.MakeVerge(r, f, "foo.txt")
-				for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
-					v.Advance(n)
-					fmt.Printf("%v\n", v)
-				}
-				vc := v.Clone()
-				// fmt.Printf("Conflicts at %v\n", v.Conflicts())
-				end, _ := v.AdvanceUntilConverged()
-				cont := r.GetContent(r.GetNode(end).Content)
-				So(string(cont[0]), ShouldEqual, "golf")
-				v = vc
-				start, conflicts := v.RetractUntilConverged()
-				cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
-				So(string(cont[len(cont)-1]), ShouldEqual, "bravo")
+
+				f := explicitFrontier(c0, c5a, c5b, c6a, c6b)
+				// We'll set these values with one of the two following Convey stanzas.  Either we
+				// will advance the verge all the way forward, then backward, or we will advance it
+				// all the way backward, then forward.  Either way we should get the same start and
+				// end to the conflict, and the same set of commits involved in the conflict.
+				var start, end string
 				var conflictsList []string
-				for c := range conflicts {
-					conflictsList = append(conflictsList, c)
-				}
+				var conflicts map[string]bool
+				Convey("we can find conflicts by going forward and then backward", func() {
+					v := graph.MakeVerge(r, f, "foo.txt")
+					for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+						v.Advance(n)
+						fmt.Printf("%v\n", v)
+					}
+					end, _ = v.AdvanceUntilConverged()
+					cont := r.GetContent(r.GetNode(end).Content)
+					So(string(cont[0]), ShouldEqual, "golf")
+					start, conflicts = v.RetractUntilConverged()
+					cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
+					So(string(cont[len(cont)-1]), ShouldEqual, "alpha")
+					for c := range conflicts {
+						conflictsList = append(conflictsList, c)
+					}
+				})
+				Convey("we can find conflicts by going backward and then forward", func() {
+					v := graph.MakeVerge(r, f, "foo.txt")
+					for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+						v.Advance(n)
+						fmt.Printf("%v\n", v)
+					}
+					start, _ = v.RetractUntilConverged()
+					startRef := r.GetRef(start)
+					cont := r.GetContent(r.GetNode(startRef).Content)
+					So(string(cont[0]), ShouldEqual, "alpha")
+					end, conflicts = v.AdvanceUntilConverged()
+					cont = r.GetContent(r.GetNode(end).Content)
+					So(string(cont[len(cont)-1]), ShouldEqual, "golf")
+					for c := range conflicts {
+						conflictsList = append(conflictsList, c)
+					}
+				})
 				So(conflictsList, ShouldNotContain, c0.Hash())
-				So(conflictsList, ShouldContain, c1.Hash())
-				So(conflictsList, ShouldContain, c2.Hash())
-				So(conflictsList, ShouldContain, c2x.Hash())
+				So(conflictsList, ShouldNotContain, c1.Hash())
+				So(conflictsList, ShouldNotContain, c2.Hash())
+				So(conflictsList, ShouldNotContain, c2x.Hash())
 				So(conflictsList, ShouldNotContain, c4.Hash())
-				versions, err := graph.ReadVersions(r, f, nil, r.GetRef(start), end, conflicts, []byte("."))
+				So(conflictsList, ShouldContain, c5a.Hash())
+				So(conflictsList, ShouldContain, c5b.Hash())
+				So(conflictsList, ShouldContain, c6a.Hash())
+				So(conflictsList, ShouldContain, c6b.Hash())
+				versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, conflicts, []byte("."))
 				So(err, ShouldBeNil)
 				So(versions, ShouldNotBeNil)
 				So(len(versions), ShouldEqual, 3)
 				unhit := map[string]bool{
-					"bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf":                         true,
-					"bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf": true,
-					"bravo.charlie.delta.BUTTONS.THE.BUTTONSBALL.echo.foxtrot.golf": true,
+					"alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf": true,
+					"alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf": true,
+					"alpha.bravo.charlie.delta.echo.fOxtrOt.golf": true,
 				}
 				for i := range versions {
 					s := string(versions[i].Data)
 					delete(unhit, s)
-					if s == "bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf" {
-						// t.Errorf("fail bean: %v\n", versions[i].Commits)
+					if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
+						So(len(versions[i].Commits), ShouldEqual, 2)
+						So(versions[i].Commits[c5a.Hash()], ShouldBeTrue)
+						So(versions[i].Commits[c5b.Hash()], ShouldBeTrue)
+					} else if s == "alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf" {
 						So(len(versions[i].Commits), ShouldEqual, 1)
-						So(versions[i].Commits[c1.Hash()], ShouldBeTrue)
-					} else if s == "bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf" {
+						So(versions[i].Commits[c6a.Hash()], ShouldBeTrue)
+					} else if s == "alpha.bravo.charlie.delta.echo.fOxtrOt.golf" {
 						So(len(versions[i].Commits), ShouldEqual, 1)
-						So(versions[i].Commits[c2.Hash()], ShouldBeTrue)
-					} else if s == "bravo.charlie.delta.BUTTONS.THE.BUTTONSBALL.echo.foxtrot.golf" {
-						// t.Errorf("fail bean: %v\n", versions[i].Commits)
-						So(len(versions[i].Commits), ShouldEqual, 1)
-						So(versions[i].Commits[c2x.Hash()], ShouldBeTrue)
+						So(versions[i].Commits[c6b.Hash()], ShouldBeTrue)
 					} else {
 						t.Errorf("unexpected version %q", s)
 					}
 				}
 				So(unhit, ShouldBeEmpty)
 			})
-			return
-			fmt.Printf("%v\n", c)
-			colors := c.getColors()
-
-			// Verify that c1, c2 and c2x are all mutually conflicted, and that c0 and c4 are not.
-			So(len(colors), ShouldEqual, 3)
-			So(len(colors[0]), ShouldEqual, 1)
-			So(allConflicts[colors[0][0]], ShouldBeTrue)
-			So(len(colors[1]), ShouldEqual, 1)
-			So(allConflicts[colors[1][0]], ShouldBeTrue)
-			So(len(colors[2]), ShouldEqual, 1)
-			So(allConflicts[colors[2][0]], ShouldBeTrue)
-			So(len(allConflicts), ShouldEqual, 3)
-
-			buf := bytes.NewBuffer(nil)
-			So(graph.PrintPath(r, explicitFrontier(c0, c1, c4), "src:foo.txt", "snk:foo.txt", buf, "."), ShouldBeNil)
-			So(buf.String(), ShouldEqual, "alpha.bravo.CHARLIE.DELTA.ECHO.FOXTROT.golf.india.")
-			buf.Truncate(0)
-			So(graph.PrintPath(r, explicitFrontier(c0, c2, c4), "src:foo.txt", "snk:foo.txt", buf, "."), ShouldBeNil)
-			So(buf.String(), ShouldEqual, "alpha.bravo.charlie.delta.buttons.the.buttonsball.echo.foxtrot.golf.india.")
 		})
 	})
-}
-
-type colorGraph struct {
-	edges map[string]map[string]bool
-}
-
-func (c *colorGraph) addEdge(a, b string) {
-	if c.edges == nil {
-		c.edges = make(map[string]map[string]bool)
-	}
-	for _, v := range [][2]string{{a, b}, {b, a}} {
-		if c.edges[v[0]] == nil {
-			c.edges[v[0]] = make(map[string]bool)
-		}
-		c.edges[v[0]][v[1]] = true
-	}
-}
-
-func (c *colorGraph) getColors() [][]string {
-	if len(c.edges) == 0 {
-		return nil
-	}
-
-	// Two-coloring is easy, so try that first.
-	if colors := c.twoColor(); colors != nil {
-		return colors
-	}
-
-	var nodes []string
-	for node := range c.edges {
-		nodes = append(nodes, node)
-	}
-	sort.Strings(nodes)
-
-	used := make(map[string]bool)
-	var colors [][]string
-	for len(used) < len(c.edges) {
-		var color []string
-		adj := make(map[string]bool)
-		for _, node := range nodes {
-			if used[node] || adj[node] {
-				continue
-			}
-			color = append(color, node)
-			used[node] = true
-			for m := range c.edges[node] {
-				adj[m] = true
-			}
-		}
-		colors = append(colors, color)
-	}
-
-	return colors
-}
-
-func (c *colorGraph) twoColor() [][]string {
-	black := make(map[string]bool)
-	for n := range c.edges {
-		if _, ok := black[n]; !ok {
-			if !c.recursiveTwoColor(n, true, black) {
-				return nil
-			}
-		}
-	}
-	colors := make([][]string, 2)
-	for n, b := range black {
-		if b {
-			colors[0] = append(colors[0], n)
-		} else {
-			colors[1] = append(colors[1], n)
-		}
-	}
-	return colors
-}
-
-func (c *colorGraph) recursiveTwoColor(n string, color bool, black map[string]bool) bool {
-	if b, ok := black[n]; ok {
-		return b == color
-	}
-	black[n] = color
-	for m := range c.edges[n] {
-		if !c.recursiveTwoColor(m, !color, black) {
-			return false
-		}
-	}
-	return true
-}
-
-type simpleFrontier map[string]bool
-
-func (s simpleFrontier) Observes(c string) bool { return s[c] }
-
-func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
-	s := make(simpleFrontier)
-	for _, c := range commits {
-		s[c.Hash()] = true
-	}
-	return s
-}
-
-func explicitFrontierStrings(commits ...string) simpleFrontier {
-	s := make(simpleFrontier)
-	for _, c := range commits {
-		s[c] = true
-	}
-	return s
 }
 
 func TestToposort(t *testing.T) {
@@ -546,65 +511,29 @@ func TestToposort(t *testing.T) {
 	})
 }
 
-// func TestDominatedGroups(t *testing.T) {
-// 	Convey("DominatedGroups", t, func() {
-// 		Convey("works on simple repos", func() {
-// 			r := commitOnlyRepo{
-// 				commits: map[string][]string{
-// 					"a": {"b", "c"},
-// 					"b": {},
-// 					"c": {},
-// 				},
-// 			}
-// 			ssr := &graph.SimpleSuperRepo{&r}
-// 			commits := make([]string, 1000)
-// 			numCommits := ssr.ListCommits("", commits)
-// 			So(numCommits, ShouldEqual, 3)
-// 			commits = commits[0:numCommits]
-// 			So(commits, ShouldContain, "a")
-// 			So(commits, ShouldContain, "b")
-// 			So(commits, ShouldContain, "c")
-// 			rdeps := ssr.RDeps(setOfHashes("b", "c"))
-// 			So(len(rdeps), ShouldEqual, 1)
-// 			dgs := graph.GetDominatedGroups(ssr, allFrontier{}, setOfHashes("a"))
-// 			So(len(dgs), ShouldEqual, 1)
-// 		})
-// 		Convey("works on more complicated repos", func() {
-// 			r := commitOnlyRepo{
-// 				commits: map[string][]string{
-// 					"a": {"b", "c", "d"},
-// 					"b": {},
-// 					"c": {"e"},
-// 					"d": {"e", "f"},
-// 					"e": {"g"},
-// 					"f": {"g"},
-// 					"g": {},
-// 					"h": {"i", "j", "k"},
-// 					"i": {"l"},
-// 					"j": {},
-// 					"k": {},
-// 					"l": {},
-// 				},
-// 			}
-// 			ssr := &graph.SimpleSuperRepo{&r}
-// 			dgs := graph.GetDominatedGroups(ssr, allFrontier{}, setOfHashes("c", "d"))
-// 			t.Errorf("%v", dgs)
-// 			So(len(dgs), ShouldEqual, 2)
-// 		})
-// 	})
-// }
-
-func setOfHashes(ss ...string) map[string]bool {
-	m := make(map[string]bool)
-	for _, s := range ss {
-		m[s] = true
-	}
-	return m
-}
-
 type allFrontier struct{}
 
 func (allFrontier) Observes(string) bool { return true }
+
+func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
+	s := make(simpleFrontier)
+	for _, c := range commits {
+		s[c.Hash()] = true
+	}
+	return s
+}
+
+func explicitFrontierStrings(commits ...string) simpleFrontier {
+	s := make(simpleFrontier)
+	for _, c := range commits {
+		s[c] = true
+	}
+	return s
+}
+
+type simpleFrontier map[string]bool
+
+func (s simpleFrontier) Observes(c string) bool { return s[c] }
 
 type commitOnlyRepo struct {
 	graph.Repo
@@ -637,6 +566,93 @@ func (r *commitOnlyRepo) ListCommits(start string, commits []string) (n int) {
 	return len(commits)
 }
 
+func TestErrorConditions(t *testing.T) {
+	Convey("graph.ReadVersion doesn't panic, just errors", t, func() {
+		Convey("on incompletely defined nodes", func() {
+			r := testutils.MakeFakeRepo()
+			r.Nodes["badnode-0"] = &graph.Node{Out: []graph.Edge{{Node: "badnode-1"}}}
+			r.Nodes["badnode-1"] = &graph.Node{Out: []graph.Edge{{Node: "badnode-2"}}}
+			r.Nodes["badnode-2"] = &graph.Node{}
+			_, err := graph.ReadVersion(r, allFrontier{}, "noexist-0", "badnode-1", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-1", "badnode-2", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-2", "badnode-3", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-3", "noexist-1", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+		})
+		Convey("on good data with bad parameters", func() {
+			r := testutils.MakeFakeRepo()
+			c0 := &graph.Commit{
+				Deps:     nil,
+				EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
+				Contents: []graph.NewContent{
+					{
+						Path: "foo.txt",
+						Form: graph.FormFileSrc,
+					},
+					{
+						Form:    graph.FormText,
+						Content: stringsToContent("alpha", "bravo", "charlie"),
+					},
+					{
+						Path: "foo.txt",
+						Form: graph.FormFileSnk,
+					},
+				},
+			}
+			graph.Apply(r, c0)
+			c1 := &graph.Commit{
+				Deps:     []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{{0, 2}, {2, 1}},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+					{Node: "src:foo.txt", Depth: 4}, // 'charlie'
+				},
+				Contents: []graph.NewContent{
+					{
+						Form:    graph.FormText,
+						Content: stringsToContent("BRAVO"),
+					},
+				},
+			}
+			graph.Apply(r, c1)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+			So(err, ShouldBeNil)
+			So(string(data), ShouldEqual, "alpha.BRAVO.charlie")
+
+			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "src:foo.txt", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "snk:foo.txt", "snk:foo.txt", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+
+			n0 := r.GetNode("src:foo.txt")
+			n1 := r.GetNode(n0.Out[len(n0.Out)-1].Node)
+			m0 := r.GetNode("snk:foo.txt")
+			m1 := r.GetNode(r.GetRef(m0.In[len(m0.In)-1].Node))
+			data, err = graph.ReadVersion(r, allFrontier{}, n1.Head, m1.Head, []byte("."), nil)
+			So(err, ShouldBeNil)
+			So(string(data), ShouldEqual, "alpha.BRAVO.charlie")
+
+			// Can't start and end at the same internal node.
+			_, err = graph.ReadVersion(r, allFrontier{}, n1.Head, n1.Head, []byte("."), nil)
+			So(err, ShouldNotBeNil)
+			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, m1.Head, []byte("."), nil)
+			So(err, ShouldNotBeNil)
+
+			// Can't go backward.
+			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, n1.Head, []byte("."), nil)
+			So(err, ShouldNotBeNil)
+
+			// Now corrupt the repo and try queries that previously would have been successful.
+			delete(r.Nodes, n1.Head)
+			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 // TODO: Need to test the following kinds of invalid commits at the very least:
 // - Edges that create cycles.
 // - An edge from nodes in one file to nodes in another file, without corresponding nodes from the other
@@ -644,7 +660,7 @@ func (r *commitOnlyRepo) ListCommits(start string, commits []string) (n int) {
 //   reflected in both files.
 func TestApplyCommits(t *testing.T) {
 	Convey("applied commits", t, func() {
-		r := graph.MakeFakeRepo()
+		r := testutils.MakeFakeRepo()
 		content0 := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "")
 		c0 := &graph.Commit{
 			Deps:     nil,
@@ -667,10 +683,9 @@ func TestApplyCommits(t *testing.T) {
 		So(graph.Apply(r, c0), ShouldBeNil)
 		So(graph.Apply(r, c0), ShouldNotBeNil) // Can't apply twice
 
-		buf := bytes.NewBuffer(nil)
-		So(graph.PrintFile(r, "foo.txt", nil, buf), ShouldBeNil)
-		So(string(buf.Bytes()), ShouldResemble, strings.Join([]string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
-		So(graph.PrintFile(r, "bar.txt", nil, buf), ShouldNotBeNil)
+		data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+		So(err, ShouldBeNil)
+		So(string(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
 
 		content1 := stringsToContent("BRAVO", "CHARLIE")
 		// This commit capitalizes the lines with 'bravo' and 'charlie'
@@ -687,53 +702,8 @@ func TestApplyCommits(t *testing.T) {
 		}
 
 		So(graph.Apply(r, c1), ShouldBeNil)
-		buf.Truncate(0)
-		So(graph.PrintFile(r, "foo.txt", nil, buf), ShouldBeNil)
-		So(string(buf.Bytes()), ShouldResemble, strings.Join([]string{"alpha", "BRAVO", "CHARLIE", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""}, "\n"))
-
-		return
-		fmt.Printf("Printing 'foo.txt'----------\n")
-		graph.PrintFile(r, "foo.txt", nil, os.Stdout)
-		fmt.Printf("----------------------------\n")
-
-		fmt.Printf("Starting with %q\n", "src:foo.txt")
-		fmt.Printf("Now to %q\n", r.Nodes["src:foo.txt"].Out[0].Node)
-		fmt.Printf("Now to %q\n", r.Nodes[r.Nodes["src:foo.txt"].Out[0].Node].Out[1].Node)
-		fmt.Printf(" on commit %q\n", r.Nodes[r.Nodes["src:foo.txt"].Out[0].Node].Out[1].Commit)
-
-		// This should be the node with the capitalized text
-		// r.Nodes["src:foo.txt"].Out[1].Node
-		c2 := &graph.Commit{
-			Deps:     []string{c0.Hash(), c1.Hash()},
-			EdgeRefs: []graph.EdgeRef{{0, 1}},
-			NodeRefs: []graph.NodeRef{
-				{
-					Node:  r.Nodes[r.Nodes["src:foo.txt"].Out[0].Node].Out[1].Node,
-					Depth: 2,
-				},
-				{
-					Node:  "src:foo.txt",
-					Depth: 6,
-				},
-			},
-			Contents: nil,
-		}
-
-		for _, n := range r.Nodes {
-			fmt.Printf("Node:\nHead: %s\nTail: %s\n", n.Head, n.Tail)
-			fmt.Printf("Out: %v\n", n.Out)
-			fmt.Printf("In: %v\n", n.In)
-			fmt.Printf("Content: \n`%s`\n", r.GetContent(n.Content))
-			fmt.Printf("\n\n\n\n\n")
-		}
-
-		fmt.Printf("Applying a commit...\n")
-		if err := graph.Apply(r, c2); err != nil {
-			fmt.Printf("Failed to apply commit: %v", err)
-			return
-		}
-		fmt.Printf("Printing 'foo.txt'----------\n")
-		graph.PrintFile(r, "foo.txt", nil, os.Stdout)
-		fmt.Printf("----------------------------\n")
+		data, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+		So(err, ShouldBeNil)
+		So(string(data), ShouldEqual, "alpha.BRAVO.CHARLIE.delta.echo.foxtrot.golf.hotel.india.")
 	})
 }
