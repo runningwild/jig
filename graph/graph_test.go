@@ -242,7 +242,7 @@ func TestVerge(t *testing.T) {
 			}
 		})
 
-		Convey("monkeys", func() {
+		Convey("advancement functions can find conflicts", func() {
 			// This inserts some text between delta and echo, just like c2, but in all caps.
 			c2x := &graph.Commit{
 				Deps: []string{c0.Hash()},
@@ -288,161 +288,158 @@ func TestVerge(t *testing.T) {
 				}
 			}
 
-			Convey("advancement functions can find conflicts", func() {
+			// capitalizes 'bravo' and 'charlie'
+			c5a := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("BRAVO", "CHARLIE")},
+				},
+			}
+			graph.Apply(r, c5a)
 
-				// capitalizes 'bravo' and 'charlie'
-				c5a := &graph.Commit{
-					Deps: []string{c0.Hash()},
-					EdgeRefs: []graph.EdgeRef{
-						{Src: 0, Dst: 2},
-						{Src: 2, Dst: 1},
-					},
-					NodeRefs: []graph.NodeRef{
-						{Node: "src:foo.txt", Depth: 2}, // 'alpha'
-						{Node: "src:foo.txt", Depth: 5}, // 'delta'
-					},
-					Contents: []graph.NewContent{
-						{Content: stringsToContent("BRAVO", "CHARLIE")},
-					},
-				}
-				graph.Apply(r, c5a)
+			// capitalizes 'echo' and 'foxtrot'
+			c5b := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 8}, // 'golf'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("ECHO", "FOXTROT")},
+				},
+			}
+			graph.Apply(r, c5b)
 
-				// capitalizes 'echo' and 'foxtrot'
-				c5b := &graph.Commit{
-					Deps: []string{c0.Hash()},
-					EdgeRefs: []graph.EdgeRef{
-						{Src: 0, Dst: 2},
-						{Src: 2, Dst: 1},
-					},
-					NodeRefs: []graph.NodeRef{
-						{Node: "src:foo.txt", Depth: 5}, // 'delta'
-						{Node: "src:foo.txt", Depth: 8}, // 'golf'
-					},
-					Contents: []graph.NewContent{
-						{Content: stringsToContent("ECHO", "FOXTROT")},
-					},
-				}
-				graph.Apply(r, c5b)
+			// munges 'bravo', 'charlie', and 'delta'
+			c6a := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("brAvO", "chArlIE", "dEltA")},
+				},
+			}
+			graph.Apply(r, c6a)
 
-				// munges 'bravo', 'charlie', and 'delta'
-				c6a := &graph.Commit{
-					Deps: []string{c0.Hash()},
-					EdgeRefs: []graph.EdgeRef{
-						{Src: 0, Dst: 2},
-						{Src: 2, Dst: 1},
-					},
-					NodeRefs: []graph.NodeRef{
-						{Node: "src:foo.txt", Depth: 2}, // 'alpha'
-						{Node: "src:foo.txt", Depth: 6}, // 'echo'
-					},
-					Contents: []graph.NewContent{
-						{Content: stringsToContent("brAvO", "chArlIE", "dEltA")},
-					},
-				}
-				graph.Apply(r, c6a)
+			// munges 'echo' and 'foxtrot'
+			c6b := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+					{Node: "src:foo.txt", Depth: 8}, // 'golf'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("fOxtrOt")},
+				},
+			}
+			graph.Apply(r, c6b)
 
-				// munges 'echo' and 'foxtrot'
-				c6b := &graph.Commit{
-					Deps: []string{c0.Hash()},
-					EdgeRefs: []graph.EdgeRef{
-						{Src: 0, Dst: 2},
-						{Src: 2, Dst: 1},
-					},
-					NodeRefs: []graph.NodeRef{
-						{Node: "src:foo.txt", Depth: 6}, // 'echo'
-						{Node: "src:foo.txt", Depth: 8}, // 'golf'
-					},
-					Contents: []graph.NewContent{
-						{Content: stringsToContent("fOxtrOt")},
-					},
-				}
-				graph.Apply(r, c6b)
+			fmt.Printf("c0(%s): %s\n", c0.Hash(), "all the stuff")
+			fmt.Printf("c5a(%s): %s\n", c5a.Hash(), "BRAVO.CHARLIE")
+			fmt.Printf("c5b(%s): %s\n", c5b.Hash(), "ECHO.FOXTROT")
+			fmt.Printf("c6a(%s): %s\n", c6a.Hash(), "brAvO.chArlIE.dEltA")
+			fmt.Printf("c6b(%s): %s\n", c6b.Hash(), "fOxtrOt")
+			fmt.Printf("Advancing Verge\n")
 
-				fmt.Printf("c0(%s): %s\n", c0.Hash(), "all the stuff")
-				fmt.Printf("c5a(%s): %s\n", c5a.Hash(), "BRAVO.CHARLIE")
-				fmt.Printf("c5b(%s): %s\n", c5b.Hash(), "ECHO.FOXTROT")
-				fmt.Printf("c6a(%s): %s\n", c6a.Hash(), "brAvO.chArlIE.dEltA")
-				fmt.Printf("c6b(%s): %s\n", c6b.Hash(), "fOxtrOt")
-				fmt.Printf("Advancing Verge\n")
-
-				f := explicitFrontier(c0, c5a, c5b, c6a, c6b)
-				// We'll set these values with one of the two following Convey stanzas.  Either we
-				// will advance the verge all the way forward, then backward, or we will advance it
-				// all the way backward, then forward.  Either way we should get the same start and
-				// end to the conflict, and the same set of commits involved in the conflict.
-				var start, end string
-				var conflictsList []string
-				var conflicts map[string]bool
-				Convey("we can find conflicts by going forward and then backward", func() {
-					v := graph.MakeVerge(r, f, "foo.txt")
-					for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
-						v.Advance(n)
-						fmt.Printf("%v\n", v)
-					}
-					end, _ = v.AdvanceUntilConverged()
-					cont := r.GetContent(r.GetNode(end).Content)
-					So(string(cont[0]), ShouldEqual, "golf")
-					start, conflicts = v.RetractUntilConverged()
-					cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
-					So(string(cont[len(cont)-1]), ShouldEqual, "alpha")
-					for c := range conflicts {
-						conflictsList = append(conflictsList, c)
-					}
-				})
-				Convey("we can find conflicts by going backward and then forward", func() {
-					v := graph.MakeVerge(r, f, "foo.txt")
-					for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
-						v.Advance(n)
-						fmt.Printf("%v\n", v)
-					}
-					start, _ = v.RetractUntilConverged()
-					startRef := r.GetRef(start)
-					cont := r.GetContent(r.GetNode(startRef).Content)
-					So(string(cont[0]), ShouldEqual, "alpha")
-					end, conflicts = v.AdvanceUntilConverged()
-					cont = r.GetContent(r.GetNode(end).Content)
-					So(string(cont[len(cont)-1]), ShouldEqual, "golf")
-					for c := range conflicts {
-						conflictsList = append(conflictsList, c)
-					}
-				})
-				So(conflictsList, ShouldNotContain, c0.Hash())
-				So(conflictsList, ShouldNotContain, c1.Hash())
-				So(conflictsList, ShouldNotContain, c2.Hash())
-				So(conflictsList, ShouldNotContain, c2x.Hash())
-				So(conflictsList, ShouldNotContain, c4.Hash())
-				So(conflictsList, ShouldContain, c5a.Hash())
-				So(conflictsList, ShouldContain, c5b.Hash())
-				So(conflictsList, ShouldContain, c6a.Hash())
-				So(conflictsList, ShouldContain, c6b.Hash())
-				versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, conflicts, []byte("."))
-				So(err, ShouldBeNil)
-				So(versions, ShouldNotBeNil)
-				So(len(versions), ShouldEqual, 3)
-				unhit := map[string]bool{
-					"alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf": true,
-					"alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf": true,
-					"alpha.bravo.charlie.delta.echo.fOxtrOt.golf": true,
+			f := explicitFrontier(c0, c5a, c5b, c6a, c6b)
+			// We'll set these values with one of the two following Convey stanzas.  Either we
+			// will advance the verge all the way forward, then backward, or we will advance it
+			// all the way backward, then forward.  Either way we should get the same start and
+			// end to the conflict, and the same set of commits involved in the conflict.
+			var start, end string
+			var conflictsList []string
+			var conflicts map[string]bool
+			Convey("we can find conflicts by going forward and then backward", func() {
+				v := graph.MakeVerge(r, f, "foo.txt")
+				for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+					v.Advance(n)
+					fmt.Printf("%v\n", v)
 				}
-				for i := range versions {
-					s := string(versions[i].Data)
-					delete(unhit, s)
-					if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
-						So(len(versions[i].Commits), ShouldEqual, 2)
-						So(versions[i].Commits[c5a.Hash()], ShouldBeTrue)
-						So(versions[i].Commits[c5b.Hash()], ShouldBeTrue)
-					} else if s == "alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf" {
-						So(len(versions[i].Commits), ShouldEqual, 1)
-						So(versions[i].Commits[c6a.Hash()], ShouldBeTrue)
-					} else if s == "alpha.bravo.charlie.delta.echo.fOxtrOt.golf" {
-						So(len(versions[i].Commits), ShouldEqual, 1)
-						So(versions[i].Commits[c6b.Hash()], ShouldBeTrue)
-					} else {
-						t.Errorf("unexpected version %q", s)
-					}
+				end, _ = v.AdvanceUntilConverged()
+				cont := r.GetContent(r.GetNode(end).Content)
+				So(string(cont[0]), ShouldEqual, "golf")
+				start, conflicts = v.RetractUntilConverged()
+				cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
+				So(string(cont[len(cont)-1]), ShouldEqual, "alpha")
+				for c := range conflicts {
+					conflictsList = append(conflictsList, c)
 				}
-				So(unhit, ShouldBeEmpty)
 			})
+			Convey("we can find conflicts by going backward and then forward", func() {
+				v := graph.MakeVerge(r, f, "foo.txt")
+				for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+					v.Advance(n)
+					fmt.Printf("%v\n", v)
+				}
+				start, _ = v.RetractUntilConverged()
+				startRef := r.GetRef(start)
+				cont := r.GetContent(r.GetNode(startRef).Content)
+				So(string(cont[0]), ShouldEqual, "alpha")
+				end, conflicts = v.AdvanceUntilConverged()
+				cont = r.GetContent(r.GetNode(end).Content)
+				So(string(cont[len(cont)-1]), ShouldEqual, "golf")
+				for c := range conflicts {
+					conflictsList = append(conflictsList, c)
+				}
+			})
+			So(conflictsList, ShouldNotContain, c0.Hash())
+			So(conflictsList, ShouldNotContain, c1.Hash())
+			So(conflictsList, ShouldNotContain, c2.Hash())
+			So(conflictsList, ShouldNotContain, c2x.Hash())
+			So(conflictsList, ShouldNotContain, c4.Hash())
+			So(conflictsList, ShouldContain, c5a.Hash())
+			So(conflictsList, ShouldContain, c5b.Hash())
+			So(conflictsList, ShouldContain, c6a.Hash())
+			So(conflictsList, ShouldContain, c6b.Hash())
+			versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, conflicts, []byte("."))
+			So(err, ShouldBeNil)
+			So(versions, ShouldNotBeNil)
+			So(len(versions), ShouldEqual, 3)
+			unhit := map[string]bool{
+				"alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf": true,
+				"alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf": true,
+				"alpha.bravo.charlie.delta.echo.fOxtrOt.golf": true,
+			}
+			for i := range versions {
+				s := string(versions[i].Data)
+				delete(unhit, s)
+				if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
+					So(len(versions[i].Commits), ShouldEqual, 2)
+					So(versions[i].Commits[c5a.Hash()], ShouldBeTrue)
+					So(versions[i].Commits[c5b.Hash()], ShouldBeTrue)
+				} else if s == "alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf" {
+					So(len(versions[i].Commits), ShouldEqual, 1)
+					So(versions[i].Commits[c6a.Hash()], ShouldBeTrue)
+				} else if s == "alpha.bravo.charlie.delta.echo.fOxtrOt.golf" {
+					So(len(versions[i].Commits), ShouldEqual, 1)
+					So(versions[i].Commits[c6b.Hash()], ShouldBeTrue)
+				} else {
+					t.Errorf("unexpected version %q", s)
+				}
+			}
+			So(unhit, ShouldBeEmpty)
 		})
 	})
 }
