@@ -175,7 +175,11 @@ func (v *Verge) look(mov mover) []string {
 	// }
 	// sort.Strings(keys)
 
-	// Acceptable nodes are ones whose inputs edges are all on the Verge.
+	// TODO: verify the bold claim made regarding moves in the paragraph below.
+	// Acceptable nodes are ones whose inputs edges are all on the Verge.  The one exception is an
+	// incoming edge that comes from a commit with a forward edge currently on the verge, this is
+	// what happens in a move, and it is safe to advance in that case by just removing the forward
+	// edge from the verge.
 	var good []string
 	for dst := range dsts {
 		n := mov.GetNode(dst)
@@ -190,7 +194,7 @@ func (v *Verge) look(mov mover) []string {
 			// if r := v.r.GetRef(target); r != "" {
 			// 	target = r
 			// }
-			if target == dst {
+			if target == dst || v.rdeps.nodes[e.Commit] {
 				count++
 			}
 		}

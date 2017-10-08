@@ -183,6 +183,7 @@ func (f *removeFromFrontier) Observes(commit string) bool {
 // commits is optional, if set it will get filled with all commits touched between start and end.
 // Reads the data between start and end, including the last chunk of start, if any, and the first
 // chunk of end, if any.
+// TODO: Need to be able to distinguish between an empty file, a non-existent file, and a conflict.
 func ReadVersion(r Repo, f Frontier, start, end string, join []byte, commits map[string]bool) ([]byte, error) {
 	var buf [][]byte
 	n := r.GetNode(start)

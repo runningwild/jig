@@ -563,6 +563,156 @@ func (r *commitOnlyRepo) ListCommits(start string, commits []string) (n int) {
 	return len(commits)
 }
 
+func TestMoves(t *testing.T) {
+	Convey("commits with moves work like any other", t, func() {
+		r := testutils.MakeFakeRepo()
+		c0 := &graph.Commit{
+			Deps:     nil,
+			EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
+			Contents: []graph.NewContent{
+				{Path: "foo.txt", Form: graph.FormFileSrc},
+				{
+					Form:    graph.FormText,
+					Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
+				},
+				{Path: "foo.txt", Form: graph.FormFileSnk},
+			},
+		}
+		graph.Apply(r, c0)
+
+		// This moves bravo.charlie.delta to between golf and hotel
+		cmove := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{Src: 0, Dst: 1},
+				{Src: 2, Dst: 3},
+				{Src: 4, Dst: 5},
+			},
+			NodeRefs: []graph.NodeRef{
+				{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+				{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				{Node: "src:foo.txt", Depth: 8}, // 'golf'
+				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				{Node: "src:foo.txt", Depth: 5}, // 'delta'
+				{Node: "src:foo.txt", Depth: 9}, // 'hotel'
+			},
+			Contents: []graph.NewContent{},
+		}
+		graph.Apply(r, cmove)
+
+		// This capitalizes 'charlie'
+		cedit := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{Src: 0, Dst: 2},
+				{Src: 2, Dst: 1},
+			},
+			NodeRefs: []graph.NodeRef{
+				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				{Node: "src:foo.txt", Depth: 5}, // 'delta'
+			},
+			Contents: []graph.NewContent{
+				{Content: stringsToContent("CHARLIE")},
+			},
+		}
+		graph.Apply(r, cedit)
+
+		// This munges 'charlie'
+		cmunge := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{Src: 0, Dst: 2},
+				{Src: 2, Dst: 1},
+			},
+			NodeRefs: []graph.NodeRef{
+				{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				{Node: "src:foo.txt", Depth: 5}, // 'delta'
+			},
+			Contents: []graph.NewContent{
+				{Content: stringsToContent("chArlIE")},
+			},
+		}
+		graph.Apply(r, cmunge)
+
+		atFrontierShouldRead := validator(r, ".")
+		So("foo.txt", atFrontierShouldRead(explicitFrontier(c0)), "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
+		So("foo.txt", atFrontierShouldRead(explicitFrontier(c0, cmove)), "alpha.echo.foxtrot.golf.bravo.charlie.delta.hotel.india.")
+		So("foo.txt", atFrontierShouldRead(explicitFrontier(c0, cedit)), "alpha.bravo.CHARLIE.delta.echo.foxtrot.golf.hotel.india.")
+		So("foo.txt", atFrontierShouldRead(explicitFrontier(c0, cmove, cedit)), "alpha.echo.foxtrot.golf.bravo.CHARLIE.delta.hotel.india.")
+		So("foo.txt", atFrontierShouldRead(explicitFrontier(c0, cmove, cmunge)), "alpha.echo.foxtrot.golf.bravo.chArlIE.delta.hotel.india.")
+
+		// TODO: Need to verify that graph.ReadVersion works with conflicts
+		// conflicts := make(map[string]bool)
+		// data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), conflicts)
+		// So(conflicts, ShouldBeEmpty)
+		// So(string(data), ShouldNotEqual, "")
+		// So(err, ShouldNotBeNil)
+
+		// The code below currently fails with moves because there are cycles in the file graph.
+		// The verge needs to be able to pass a node with an incoming edge if that incoming edge
+		// comes from a commit currently on the verge, and then maybe that's it?  Maybe it's very simple.
+		var start, end string
+		var conflictsList []string
+		var conflicts map[string]bool
+		Convey("we can find conflicts in insane files by going forward and then backward", func() {
+			v := graph.MakeVerge(r, allFrontier{}, "foo.txt")
+			for n := v.Next()[0]; len(v.Conflicts()) == 0; n = v.Next()[0] {
+				fmt.Printf("Advancing past %v %s\n", n, r.GetContent(r.GetNode(n).Content))
+				v.Advance(n)
+				fmt.Printf("%v\n", v)
+			}
+			end, _ = v.AdvanceUntilConverged()
+			cont := r.GetContent(r.GetNode(end).Content)
+			So(string(cont[0]), ShouldEqual, "delta")
+			start, conflicts = v.RetractUntilConverged()
+			cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
+			So(string(cont[len(cont)-1]), ShouldEqual, "bravo")
+			for c := range conflicts {
+				conflictsList = append(conflictsList, c)
+			}
+		})
+		vs, err := graph.ReadVersions(r, allFrontier{}, nil, start, end, conflicts, []byte("."))
+		So(err, ShouldBeNil)
+		So(len(vs), ShouldEqual, 2)
+		unhit := map[string]bool{
+			"bravo.CHARLIE.delta": true,
+			"bravo.chArlIE.delta": true,
+		}
+		for i := range vs {
+			s := string(vs[i].Data)
+			delete(unhit, s)
+			if s == "bravo.CHARLIE.delta" {
+				So(len(vs[i].Commits), ShouldEqual, 1)
+				So(vs[i].Commits[cedit.Hash()], ShouldBeTrue)
+			} else if s == "bravo.chArlIE.delta" {
+				So(len(vs[i].Commits), ShouldEqual, 1)
+				So(vs[i].Commits[cmunge.Hash()], ShouldBeTrue)
+			} else {
+				t.Errorf("unexpected version %q", s)
+			}
+		}
+		So(unhit, ShouldBeEmpty)
+	})
+}
+
+func validator(r graph.Repo, sep string) func(f graph.Frontier) func(file interface{}, expected ...interface{}) string {
+	return func(f graph.Frontier) func(file interface{}, expected ...interface{}) string {
+		return func(file interface{}, expected ...interface{}) string {
+			line, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", file), fmt.Sprintf("snk:%s", file), []byte(sep), nil)
+			if err != nil {
+				return fmt.Sprintf("failed to read %s: %v", file, err)
+			}
+			if string(line) == expected[0].(string) {
+				return ""
+			} else {
+				return fmt.Sprintf("File %q had the wrong contents:\nActual:   %q\nExpected: %q", file, string(line), expected[0].(string))
+			}
+		}
+	}
+}
+
+// func FileAtFrontier(r graph.Repo, f graph.Frontier, filename string, sep string)
+
 func TestErrorConditions(t *testing.T) {
 	Convey("graph.ReadVersion doesn't panic, just errors", t, func() {
 		Convey("on incompletely defined nodes", func() {
