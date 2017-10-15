@@ -125,19 +125,21 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	return tail0, head1, nil
 }
 
-// TODO: this currently can returns version that, while self-consistent, put A and B in separate version
-// when A depends on B, which is a bit odd.  To fix this we need to be able to go from a set of commits
-// to a subgraph that shows their transitive relationships.
+// ReadVersions returns a []Version with one Version for each conflicting view of the file.  If prev
+// is not nil, then one of the Versions will correspond to the conflicting commits, and all other
+// Versions will contain a single conflicting commit.
+// TODO: The restriction below should be verified.
 // If prev is set it must be a frontier at which there is no conflict between start and end.
 func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
 	var versions []Version
 	used := make(map[string]bool)
 	if prev != nil {
 		allCommits := make(map[string]bool)
-		data, err := ReadVersion(r, prev, start, end, join, allCommits)
+		lines, err := ReadVersion(r, prev, start, end, allCommits)
 		if err != nil {
 			return nil, err
 		}
+		data := bytes.Join(lines, join)
 		commits := make(map[string]bool)
 		for c := range allCommits {
 			if _, ok := conflicts[c]; ok {
@@ -153,10 +155,11 @@ func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[str
 			continue
 		}
 		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: conflicts}, add: map[string]bool{c: true}}
-		data, err := ReadVersion(r, next, start, end, join, nil)
+		lines, err := ReadVersion(r, next, start, end, nil)
 		if err != nil {
 			return nil, err
 		}
+		data := bytes.Join(lines, join)
 		versions = append(versions, Version{Commits: map[string]bool{c: true}, Data: data})
 	}
 	return versions, nil
@@ -184,7 +187,7 @@ func (f *removeFromFrontier) Observes(commit string) bool {
 // Reads the data between start and end, including the last chunk of start, if any, and the first
 // chunk of end, if any.
 // TODO: Need to be able to distinguish between an empty file, a non-existent file, and a conflict.
-func ReadVersion(r Repo, f Frontier, start, end string, join []byte, commits map[string]bool) ([]byte, error) {
+func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool) ([][]byte, error) {
 	var buf [][]byte
 	n := r.GetNode(start)
 	if n == nil {
@@ -238,7 +241,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, join []byte, commits map
 		buf = append(buf, content[0])
 	}
 
-	return bytes.Join(buf, join), nil
+	return buf, nil
 }
 
 type Version struct {

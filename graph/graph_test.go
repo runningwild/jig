@@ -42,14 +42,14 @@ func TestSplitNode(t *testing.T) {
 		r := testutils.MakeFakeRepo()
 		sampleContent := stringsToContent("foo", "bar", "wing", "ding", "monkey", "ball", "")
 		contentHash := r.PutContent(sampleContent)
-		head, tail := graph.CalculateNodeHashes("commit-0", "path:sample.txt", graph.FormText, sampleContent)
+		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", graph.FormText, sampleContent)
 		r.PutNode(&graph.Node{
 			Head:    head,
 			Tail:    tail,
 			Form:    graph.FormText,
 			Content: contentHash,
 			Count:   7,
-			In:      []graph.Edge{{Commit: "commit-0", Node: "path:sample.txt", Primary: true}},
+			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt", Primary: true}},
 			Out:     []graph.Edge{{Commit: "commit-0", Node: "1"}},
 		})
 		Convey("can split a node where dist < n.Count", func() {
@@ -444,6 +444,52 @@ func TestVerge(t *testing.T) {
 	})
 }
 
+func TestProgrammaticCommits(t *testing.T) {
+	// Convey("beans are beans", t, func() {
+	// 	r := testutils.MakeFakeRepo()
+	// 	c0 := &graph.Commit{
+	// 		Deps:     nil,
+	// 		EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
+	// 		Contents: []graph.NewContent{
+	// 			{
+	// 				Path: "sample.txt",
+	// 				Form: graph.FormFileSrc,
+	// 			},
+	// 			{
+	// 				Form:    graph.FormText,
+	// 				Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
+	// 			},
+	// 			{
+	// 				Path: "sample.txt",
+	// 				Form: graph.FormFileSnk,
+	// 			},
+	// 		},
+	// 	}
+	// 	So(graph.Apply(r, c0), ShouldBeNil)
+	// 	data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", nil)
+	// 	So(err, ShouldBeNil)
+	// 	So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
+
+	// 	// Let's remove 'delta'.  This will require two splits and a new edge.
+	// 	// NEXT: we need a function that takes a list of depths and returns the appropriate node/depth pair to use as a node-ref.
+	// 	//       this shouldn't depend on which commits are involved, but when we make the edges we'll need to determine those.
+	// 	head0, _, err := graph.SplitNode(r, "src:sample.txt", 3)
+	// 	So(err, ShouldBeNil)
+	// 	_, tail1, err := graph.SplitNode(r, "snk:sample.txt", 3)
+	// 	So(err, ShouldBeNil)
+	// 	c1 := &graph.Commit{
+	// 		Deps:     c0.Hash(),
+	// 		EdgeRefs: []graph.EdgeRef{},
+	// 		Contents: nil,
+	// 		NodeRefs: []graph.NodeRef{},
+	// 	}
+	// })
+}
+
+func diffmachine() {
+
+}
+
 func TestToposort(t *testing.T) {
 	Convey("Toposort works", t, func() {
 		Convey("on a very simple graph", func() {
@@ -698,11 +744,12 @@ func TestMoves(t *testing.T) {
 func validator(r graph.Repo, sep string) func(f graph.Frontier) func(file interface{}, expected ...interface{}) string {
 	return func(f graph.Frontier) func(file interface{}, expected ...interface{}) string {
 		return func(file interface{}, expected ...interface{}) string {
-			line, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", file), fmt.Sprintf("snk:%s", file), []byte(sep), nil)
+			lines, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", file), fmt.Sprintf("snk:%s", file), nil)
 			if err != nil {
 				return fmt.Sprintf("failed to read %s: %v", file, err)
 			}
-			if string(line) == expected[0].(string) {
+			line := string(bytes.Join(lines, []byte(sep)))
+			if line == expected[0].(string) {
 				return ""
 			} else {
 				return fmt.Sprintf("File %q had the wrong contents:\nActual:   %q\nExpected: %q", file, string(line), expected[0].(string))
@@ -720,13 +767,13 @@ func TestErrorConditions(t *testing.T) {
 			r.Nodes["badnode-0"] = &graph.Node{Out: []graph.Edge{{Node: "badnode-1"}}}
 			r.Nodes["badnode-1"] = &graph.Node{Out: []graph.Edge{{Node: "badnode-2"}}}
 			r.Nodes["badnode-2"] = &graph.Node{}
-			_, err := graph.ReadVersion(r, allFrontier{}, "noexist-0", "badnode-1", []byte("."), nil)
+			_, err := graph.ReadVersion(r, allFrontier{}, "noexist-0", "badnode-1", nil)
 			So(err, ShouldNotBeNil)
-			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-1", "badnode-2", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-1", "badnode-2", nil)
 			So(err, ShouldNotBeNil)
-			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-2", "badnode-3", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-2", "badnode-3", nil)
 			So(err, ShouldNotBeNil)
-			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-3", "noexist-1", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "badnode-3", "noexist-1", nil)
 			So(err, ShouldNotBeNil)
 		})
 		Convey("on good data with bad parameters", func() {
@@ -765,36 +812,36 @@ func TestErrorConditions(t *testing.T) {
 				},
 			}
 			graph.Apply(r, c1)
-			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", nil)
 			So(err, ShouldBeNil)
-			So(string(data), ShouldEqual, "alpha.BRAVO.charlie")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.BRAVO.charlie")
 
-			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "src:foo.txt", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "src:foo.txt", nil)
 			So(err, ShouldNotBeNil)
-			_, err = graph.ReadVersion(r, allFrontier{}, "snk:foo.txt", "snk:foo.txt", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "snk:foo.txt", "snk:foo.txt", nil)
 			So(err, ShouldNotBeNil)
 
 			n0 := r.GetNode("src:foo.txt")
 			n1 := r.GetNode(n0.Out[len(n0.Out)-1].Node)
 			m0 := r.GetNode("snk:foo.txt")
 			m1 := r.GetNode(r.GetRef(m0.In[len(m0.In)-1].Node))
-			data, err = graph.ReadVersion(r, allFrontier{}, n1.Head, m1.Head, []byte("."), nil)
+			data, err = graph.ReadVersion(r, allFrontier{}, n1.Head, m1.Head, nil)
 			So(err, ShouldBeNil)
-			So(string(data), ShouldEqual, "alpha.BRAVO.charlie")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.BRAVO.charlie")
 
 			// Can't start and end at the same internal node.
-			_, err = graph.ReadVersion(r, allFrontier{}, n1.Head, n1.Head, []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, n1.Head, n1.Head, nil)
 			So(err, ShouldNotBeNil)
-			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, m1.Head, []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, m1.Head, nil)
 			So(err, ShouldNotBeNil)
 
 			// Can't go backward.
-			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, n1.Head, []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, m1.Head, n1.Head, nil)
 			So(err, ShouldNotBeNil)
 
 			// Now corrupt the repo and try queries that previously would have been successful.
 			delete(r.Nodes, n1.Head)
-			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+			_, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", nil)
 			So(err, ShouldNotBeNil)
 		})
 	})
@@ -830,9 +877,9 @@ func TestApplyCommits(t *testing.T) {
 		So(graph.Apply(r, c0), ShouldBeNil)
 		So(graph.Apply(r, c0), ShouldNotBeNil) // Can't apply twice
 
-		data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+		data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", nil)
 		So(err, ShouldBeNil)
-		So(string(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
+		So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
 
 		content1 := stringsToContent("BRAVO", "CHARLIE")
 		// This commit capitalizes the lines with 'bravo' and 'charlie'
@@ -849,8 +896,8 @@ func TestApplyCommits(t *testing.T) {
 		}
 
 		So(graph.Apply(r, c1), ShouldBeNil)
-		data, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", []byte("."), nil)
+		data, err = graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", nil)
 		So(err, ShouldBeNil)
-		So(string(data), ShouldEqual, "alpha.BRAVO.CHARLIE.delta.echo.foxtrot.golf.hotel.india.")
+		So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.BRAVO.CHARLIE.delta.echo.foxtrot.golf.hotel.india.")
 	})
 }
