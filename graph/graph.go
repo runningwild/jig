@@ -135,7 +135,7 @@ func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[str
 	used := make(map[string]bool)
 	if prev != nil {
 		allCommits := make(map[string]bool)
-		lines, err := ReadVersion(r, prev, start, end, allCommits)
+		lines, err := ReadVersion(r, prev, start, end, &ReadMetadata{Commits: allCommits})
 		if err != nil {
 			return nil, err
 		}
@@ -155,7 +155,7 @@ func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[str
 			continue
 		}
 		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: conflicts}, add: map[string]bool{c: true}}
-		lines, err := ReadVersion(r, next, start, end, nil)
+		lines, err := ReadVersion(r, next, start, end, &ReadMetadata{})
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +187,7 @@ func (f *removeFromFrontier) Observes(commit string) bool {
 // Reads the data between start and end, including the last chunk of start, if any, and the first
 // chunk of end, if any.
 // TODO: Need to be able to distinguish between an empty file, a non-existent file, and a conflict.
-func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool) ([][]byte, error) {
+func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) ([][]byte, error) {
 	var buf [][]byte
 	n := r.GetNode(start)
 	if n == nil {
@@ -208,6 +208,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool)
 		buf = append(buf, content[len(content)-1])
 	}
 
+	readDepth := 0
 	for {
 		fmt.Printf("On node %q\n", n.Head)
 		for i := len(n.Out) - 1; i >= 0; i-- {
@@ -215,8 +216,8 @@ func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool)
 			if !f.Observes(e.Commit) {
 				continue
 			}
-			if commits != nil {
-				commits[n.Out[0].Commit] = true
+			if metadata.Commits != nil {
+				metadata.Commits[n.Out[0].Commit] = true
 			}
 			n = r.GetNode(e.Node)
 			if n == nil {
@@ -232,7 +233,13 @@ func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool)
 			break
 		}
 		// fmt.Printf("%s\n", nodeContent(r, n.Head))
-		buf = append(buf, r.GetContent(n.Content)...)
+		content := r.GetContent(n.Content)
+		buf = append(buf, content...)
+		if metadata.Ranges != nil {
+			ref, depth := nodeRef(r, n)
+			*metadata.Ranges = append(*metadata.Ranges, ReadRange{Commit: nodeCommit(n), Node: ref, Depth: depth, ReadDepth: readDepth, Length: len(content)})
+			readDepth += len(content)
+		}
 		prev = n
 	}
 
@@ -242,6 +249,45 @@ func ReadVersion(r Repo, f Frontier, start, end string, commits map[string]bool)
 	}
 
 	return buf, nil
+}
+
+func nodeCommit(n *Node) string {
+	if len(n.In) != 0 {
+		return n.In[0].Commit
+	}
+	if len(n.Out) != 0 {
+		return n.Out[0].Commit
+	}
+	panic("how did you let this happen?")
+}
+
+func nodeRef(r Repo, n *Node) (string, int) {
+	prev := r.GetNode(n.In[0].Node)
+	if nodeCommit(prev) != nodeCommit(n) || prev.Form == FormFileSrc {
+		return n.Head, 0
+	}
+	ref, d := nodeRef(r, prev)
+	return ref, d + prev.Count
+}
+
+type ReadMetadata struct {
+	// If non-nil this will be filled with all commits touched between start and end.  Reads the
+	// data between start and end, including the last chunk of start, if any, and the first chunk
+	// of end, if any.
+	Commits map[string]bool
+
+	// If non-nil this will be filled with the list of ReadRanges that covers everything read.
+	Ranges *[]ReadRange
+}
+
+// ReadRange indicates what commit was responsible for content in a file, and how many contiguous
+// rows it was responsible for.
+type ReadRange struct {
+	Commit    string
+	Node      string
+	Depth     int // Depth into the node
+	ReadDepth int // Depth into the read
+	Length    int
 }
 
 type Version struct {
