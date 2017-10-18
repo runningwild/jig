@@ -40,7 +40,12 @@ func main() {
 	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india." {
 		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india."))
 	}
-	diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
+	c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
+	c1.Deps = append(c1.Deps, c0.Hash())
+	fmt.Printf("Applying commit: %v\n", c1)
+	if err := graph.Apply(r, c1); err != nil {
+		panic(fmt.Sprintf("failed to apply commit: %v", err))
+	}
 
 	// Let's remove 'delta'.  This will require two splits and a new edge.
 	// NEXT: we need a function that takes a list of depths and returns the appropriate node/depth pair to use as a node-ref.
@@ -57,7 +62,7 @@ func main() {
 	// }
 }
 
-func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) {
+func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *graph.Commit {
 	var ranges []graph.ReadRange
 	lines0, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", path), fmt.Sprintf("snk:%s", path), &graph.ReadMetadata{Ranges: &ranges})
 	if err != nil {
@@ -88,17 +93,38 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) {
 	fmt.Printf("css: %v\n", css)
 	total := 0
 
+	type refspec struct {
+		src     bool
+		snk     bool
+		node    bool
+		content bool
+		index   int
+	}
+	var edges [][2]refspec
+	var c graph.Commit
+
 	prev := fmt.Sprintf("src:%s", path)
+	prevSpec := refspec{src: true, index: 0}
+	c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("src:%s", path)})
 	for _, cs := range css {
 		if cs.Bi > total {
 			next := fmt.Sprintf("NEW(%q)", lines1[total:cs.Bi])
+			nextSpec := refspec{content: true, index: len(c.Contents)}
+			edges = append(edges, [2]refspec{prevSpec, nextSpec})
+			fmt.Printf("0 Adding edge spec: %v\n", edges[len(edges)-1])
 			fmt.Printf("EDGE: %s -> NEW(%s)\n", prev, next)
 			prev = next
+			prevSpec = nextSpec
+			c.Contents = append(c.Contents, graph.NewContent{Form: graph.FormText, Content: lines1[total:cs.Bi]})
 		}
 		n := sort.Search(len(ranges), func(index int) bool {
 			return ranges[index].Depth+ranges[index].Length >= cs.Bi
 		})
 		next := fmt.Sprintf("REF(%s@%d)", ranges[n].Commit, ranges[n].Depth+cs.Bi-ranges[n].ReadDepth)
+		nextSpec := refspec{node: true, index: len(c.NodeRefs)}
+		c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + cs.Bi - ranges[n].ReadDepth})
+		edges = append(edges, [2]refspec{prevSpec, nextSpec})
+		fmt.Printf("1 Adding edge spec: %v\n", edges[len(edges)-1])
 		fmt.Printf("EDGE: %s -> %s\n", prev, next)
 		fmt.Printf("%d existing lines: %s\n", cs.Length, lines1[cs.Bi:cs.Bi+cs.Length])
 		i := cs.Bi
@@ -116,6 +142,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) {
 				// This miiiight be right, but we need to test when the common substrings go over multiple
 				// nodes, that might screw this up.
 				prev = fmt.Sprintf("REFx(%s@%d)", ranges[n].Commit, i-ranges[n].Length+used)
+				prevSpec = refspec{node: true, index: len(c.NodeRefs)}
 			}
 			fmt.Printf("i: %d\n", i)
 			n++
@@ -123,6 +150,26 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) {
 		total = cs.Bi + cs.Length
 	}
 	fmt.Printf("EDGE: %s -> %s\n", prev, fmt.Sprintf("snk:%s", path))
+	edges = append(edges, [2]refspec{prevSpec, refspec{snk: true, index: len(c.NodeRefs)}})
+	fmt.Printf("Adding edge spec: %v\n", edges[len(edges)-1])
+	c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("snk:%s", path)})
+	for _, edge := range edges {
+		if edge[0].content {
+			edge[0].index += len(c.NodeRefs)
+		}
+		if edge[1].content {
+			edge[1].index += len(c.NodeRefs)
+		}
+		c.EdgeRefs = append(c.EdgeRefs, graph.EdgeRef{Src: edge[0].index, Dst: edge[1].index})
+	}
+	// return &graph.Commit{
+	// 	Deps:     nil,
+	// 	EdgeRefs: []*graph.EdgeRef{},
+	// 	NodeRefs: []*graph.NodeRef{},
+	// 	Contents: []*graph.NewContent{},
+	// }
+
+	return &c
 }
 
 func stringsToContent(ss ...string) [][]byte {

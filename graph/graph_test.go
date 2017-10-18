@@ -100,6 +100,109 @@ func TestSplitNode(t *testing.T) {
 	})
 }
 
+func TestCommits(t *testing.T) {
+	Convey("Commits", t, func() {
+		r := testutils.MakeFakeRepo()
+		c0 := &graph.Commit{
+			Deps:     nil,
+			EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
+			Contents: []graph.NewContent{
+				{
+					Path: "foo.txt",
+					Form: graph.FormFileSrc,
+				},
+				{
+					Form:    graph.FormText,
+					Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
+				},
+				{
+					Path: "foo.txt",
+					Form: graph.FormFileSnk,
+				},
+			},
+		}
+		So(graph.Apply(r, c0), ShouldBeNil)
+
+		Convey("can delete the first line of a file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 0},
+					{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				},
+				Contents: nil,
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.charlie.delta.echo")
+		})
+
+		Convey("can modify the first line of a file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 0},
+					{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("BRAVO")},
+				},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.BRAVO.charlie.delta.echo")
+		})
+
+		Convey("can delete the last line of a file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 4}, // 'delta'
+					{Node: "snk:foo.txt", Depth: 0},
+				},
+				Contents: nil,
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta")
+		})
+
+		Convey("can modify the last line of a file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 2, Dst: 1},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 4}, // 'delta'
+					{Node: "snk:foo.txt", Depth: 0},
+				},
+				Contents: []graph.NewContent{
+					{Content: stringsToContent("ECHO")},
+				},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.ECHO")
+		})
+	})
+}
+
 func TestVerge(t *testing.T) {
 	Convey("applied commits", t, func() {
 		r := testutils.MakeFakeRepo()
@@ -511,7 +614,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) {
 	}
 	css := jig.LCS2(vs[0], vs[1])
 	So(len(css), ShouldBeGreaterThan, 0)
-	panic(fmt.Sprintf("%v", css))
+	// panic(fmt.Sprintf("%v", css))
 	sort.Slice(css, func(i, j int) bool {
 		return css[i].Bi < css[j].Bi
 	})

@@ -39,6 +39,7 @@ type Repo interface {
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	if depth <= 0 {
+		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
 	}
 	var n *Node
@@ -329,12 +330,12 @@ func Apply(r Repo, c *Commit) error {
 	for _, e := range c.EdgeRefs {
 		if e.Src >= 0 && e.Src < len(c.NodeRefs) {
 			if _, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth); err != nil {
-				return fmt.Errorf("error splitting src node: %v", err)
+				return fmt.Errorf("error splitting src node %q: %v", c.NodeRefs[e.Src].Node, err)
 			}
 		}
 		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
 			if _, _, err := SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1); err != nil {
-				return fmt.Errorf("error splitting dst node: %v", err)
+				return fmt.Errorf("error splitting dst node %q: %v", c.NodeRefs[e.Dst].Node, err)
 			}
 		}
 	}
