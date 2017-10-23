@@ -22,7 +22,7 @@ func stringsToContent(ss ...string) [][]byte {
 }
 
 func contentToString(content [][]byte) string {
-	return string(bytes.Join(content, []byte{'\n'}))
+	return string(bytes.Join(content, []byte{'.'}))
 }
 
 func TestNodeHashes(t *testing.T) {
@@ -41,7 +41,7 @@ func TestNodeHashes(t *testing.T) {
 func TestSplitNode(t *testing.T) {
 	Convey("SplitNode", t, func() {
 		r := testutils.MakeFakeRepo()
-		sampleContent := stringsToContent("foo", "bar", "wing", "ding", "monkey", "ball", "")
+		sampleContent := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf")
 		contentHash := r.PutContent(sampleContent)
 		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", graph.FormText, sampleContent)
 		r.PutNode(&graph.Node{
@@ -51,7 +51,7 @@ func TestSplitNode(t *testing.T) {
 			Content: contentHash,
 			Count:   7,
 			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt", Primary: true}},
-			Out:     []graph.Edge{{Commit: "commit-0", Node: "1"}},
+			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Primary: true}},
 		})
 		Convey("can split a node where dist < n.Count", func() {
 			tail0, head1, err := graph.SplitNode(r, head, 3)
@@ -68,8 +68,8 @@ func TestSplitNode(t *testing.T) {
 			So(node1.In[0].Node, ShouldEqual, tail0)
 			So(node0.Count, ShouldEqual, 3)
 			So(node1.Count, ShouldEqual, 4)
-			So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
-			So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "ding\nmonkey\nball\n")
+			So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "alpha.bravo.charlie")
+			So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "delta.echo.foxtrot.golf")
 			Convey("and and where dist > n.Count", func() {
 				tail1, head2, err := graph.SplitNode(r, head, 5)
 				So(err, ShouldBeNil)
@@ -84,9 +84,9 @@ func TestSplitNode(t *testing.T) {
 				So(node0.Count, ShouldEqual, 3)
 				So(node1.Count, ShouldEqual, 2)
 				So(node2.Count, ShouldEqual, 2)
-				So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "foo\nbar\nwing")
-				So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "ding\nmonkey")
-				So(contentToString(r.GetContent(node2.Content)), ShouldEqual, "ball\n")
+				So(contentToString(r.GetContent(node0.Content)), ShouldEqual, "alpha.bravo.charlie")
+				So(contentToString(r.GetContent(node1.Content)), ShouldEqual, "delta.echo")
+				So(contentToString(r.GetContent(node2.Content)), ShouldEqual, "foxtrot.golf")
 			})
 		})
 		Convey("doesn't split if the split point is at the end of an existing node", func() {
@@ -94,7 +94,7 @@ func TestSplitNode(t *testing.T) {
 			a, b, err := graph.SplitNode(r, head, 7)
 			So(err, ShouldBeNil)
 			So(a, ShouldEqual, tail)
-			So(b, ShouldEqual, "1")
+			So(b, ShouldEqual, "snk:sample.txt")
 			So(len(r.Nodes), ShouldEqual, before)
 		})
 	})
