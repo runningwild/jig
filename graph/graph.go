@@ -202,7 +202,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		return nil, fmt.Errorf("start and end were the same node")
 	}
 	prev := n
-	fmt.Printf("End is %s\n", nodeContent(r, end))
+	// fmt.Printf("End is %s\n", nodeContent(r, end))
 	fmt.Printf("Pathing from %s to %s\n", start, end)
 
 	// Only take the last chunk from the starting node.
@@ -264,7 +264,9 @@ func nodeCommit(n *Node) string {
 }
 
 func nodeRef(r Repo, n *Node) (string, int) {
-	prev := r.GetNode(n.In[0].Node)
+	fmt.Printf("Getting ref for %s: %s\n", n.Head, nodeContent(r, n.Head))
+	prev := r.GetNode(r.GetRef(n.In[0].Node))
+	fmt.Printf("prev: %s\n", n.In[0].Node)
 	if nodeCommit(prev) != nodeCommit(n) || prev.Form == FormFileSrc {
 		return n.Head, 0
 	}
@@ -335,15 +337,28 @@ func Apply(r Repo, c *Commit) error {
 	// where to split because we need to split before or after a node depending on if we're using
 	// that node as a src or dst.
 	for _, e := range c.EdgeRefs {
-		if e.Src >= 0 && e.Src < len(c.NodeRefs) && c.NodeRefs[e.Src].Depth > 0 {
-			if _, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth); err != nil {
-				return fmt.Errorf("error splitting src node %q: %v", c.NodeRefs[e.Src].Node, err)
+		if e.Src >= 0 && e.Src < len(c.NodeRefs) {
+			ref := c.NodeRefs[e.Src]
+			if ref.Depth <= 0 {
+				return fmt.Errorf("cannot specify a src node with depth <= 0 (%s @ %d)", ref.Node, ref.Depth)
+			}
+			if _, _, err := SplitNode(r, ref.Node, ref.Depth); err != nil {
+				return fmt.Errorf("error splitting src node %q: %v", ref.Node, err)
 			}
 
 		}
-		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) && c.NodeRefs[e.Dst].Depth > 0 {
-			if _, _, err := SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1); err != nil {
-				return fmt.Errorf("error splitting dst node %q: %v", c.NodeRefs[e.Dst].Node, err)
+		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
+			ref := c.NodeRefs[e.Dst]
+			if ref.Depth < 0 {
+				return fmt.Errorf("cannot specify a dst node with depth < 0 (%s @ %d)", ref.Node, ref.Depth)
+			}
+			if ref.Depth == 0 {
+				// Avoid trying to split this node, because we can't do that at depth 0, we can
+				// still use it as a dst node, though.
+				continue
+			}
+			if _, _, err := SplitNode(r, ref.Node, ref.Depth-1); err != nil {
+				return fmt.Errorf("error splitting dst node %q: %v", ref.Node, err)
 			}
 		}
 	}
@@ -356,6 +371,12 @@ func Apply(r Repo, c *Commit) error {
 			refs = append(refs, r.GetNode(ref.Node))
 		} else {
 			fmt.Printf("Splitting %s at %d\n", ref.Node, ref.Depth)
+			if ref.Depth == 0 {
+				// We know this is a dst node, because we've already checked that no src nodes have
+				// depth <= 0.
+				refs = append(refs, r.GetNode(ref.Node))
+				continue
+			}
 			tail, _, err := SplitNode(r, ref.Node, ref.Depth)
 			if err != nil {
 				return fmt.Errorf("error re-splitting node %q at depth %d: %v", ref.Node, ref.Depth, err)
