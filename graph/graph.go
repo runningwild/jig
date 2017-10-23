@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash"
+	"strings"
 
 	skein512 "github.com/runningwild/skein/hash/512"
 )
@@ -324,27 +325,55 @@ func Apply(r Repo, c *Commit) error {
 		}
 	}
 
-	// TODO: Validate that all new content has an outgoing edge (which may be to an EOF marker).
+	// TODO: Validate at LEAST all of the following:
+	//   all new content has an outgoing edge (which may be to an EOF marker).
+	//   no cycles
+	//   no creation of two edges from or to the same node
+	//   really there are so many more...
 
-	// Split all nodes at the appropriate positions.
+	// Split all nodes at the appropriate positions.  It's important to go through EdgeRefs to see
+	// where to split because we need to split before or after a node depending on if we're using
+	// that node as a src or dst.
 	for _, e := range c.EdgeRefs {
-		if e.Src >= 0 && e.Src < len(c.NodeRefs) {
+		if e.Src >= 0 && e.Src < len(c.NodeRefs) && c.NodeRefs[e.Src].Depth > 0 {
 			if _, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth); err != nil {
 				return fmt.Errorf("error splitting src node %q: %v", c.NodeRefs[e.Src].Node, err)
 			}
+
 		}
-		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
+		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) && c.NodeRefs[e.Dst].Depth > 0 {
 			if _, _, err := SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1); err != nil {
 				return fmt.Errorf("error splitting dst node %q: %v", c.NodeRefs[e.Dst].Node, err)
 			}
 		}
 	}
 
-	// Now go back and get the hashes.  We have to do all of the splitting first because we might
-	// split some nodes multiple times before we're done.
+	// Get a slice of all nodes that matches the commit's NodeRefs.  This way a node that was split
+	// multiple times will still end up in this slice with the appropriate sub-node.
+	var refs []*Node
+	for _, ref := range c.NodeRefs {
+		if (strings.HasPrefix(ref.Node, "src:") || strings.HasPrefix(ref.Node, "snk:")) && ref.Depth == 0 {
+			refs = append(refs, r.GetNode(ref.Node))
+		} else {
+			fmt.Printf("Splitting %s at %d\n", ref.Node, ref.Depth)
+			tail, _, err := SplitNode(r, ref.Node, ref.Depth)
+			if err != nil {
+				return fmt.Errorf("error re-splitting node %q at depth %d: %v", ref.Node, ref.Depth, err)
+			}
+			fmt.Printf("Got %s -> %s: %s\n", tail, r.GetRef(tail), nodeContent(r, r.GetRef(tail)))
+			ref := r.GetNode(r.GetRef(tail))
+			// if ref == nil {
+			// 	fmt.Printf("NIL REF: %s %s\n", tail, r.GetRef(tail))
+			// }
+			refs = append(refs, ref)
+		}
+	}
 
 	// Create all of the new nodes added by this commit.
-	var newNodes []string
+	// NEXT: We're rewriting this function because I think it was subtly buggy.  Probably want to start by making
+	// the newNodes variable be a slice of *Node rather than string.
+	var newns []*Node
+	// var newNodes []string
 	for i, nc := range c.Contents {
 		if nc.Form == FormFileSrc || nc.Form == FormFileSnk {
 			mode := "src"
@@ -357,9 +386,11 @@ func Apply(r Repo, c *Commit) error {
 				Count: 1,
 			}
 			n.Tail = n.Head
+			fmt.Printf("Putting %s\n", n.Head)
 			r.PutNode(n)
 			r.PutRef(n.Tail, n.Head)
-			newNodes = append(newNodes, n.Head)
+			newns = append(newns, n)
+			// newNodes = append(newNodes, n.Head)
 			continue
 		}
 		n := &Node{
@@ -369,6 +400,7 @@ func Apply(r Repo, c *Commit) error {
 		}
 
 		var prev string
+
 		// We need to know the previous node's hash to calculate this node's hash.  If this is a
 		// new file then it's just the path, otherwise we need to look through the edges to find
 		// which one is pointing to this node, the other end of that edge will be the previous node.
@@ -376,14 +408,18 @@ func Apply(r Repo, c *Commit) error {
 			if e.Dst != len(c.NodeRefs)+i {
 				continue
 			}
-			var prevNode *Node
+			// var prevNode *Node
 			if e.Src < len(c.NodeRefs) {
-				prevNode = r.GetNode(c.NodeRefs[e.Src].Node)
-				prev = prevNode.Tail
+				if refs[e.Src] == nil {
+					fmt.Printf("NILED REF: %d -> %v\n", e.Src, refs[e.Src])
+				}
+				prev = refs[e.Src].Tail
+				// prevNode = r.GetNode(c.NodeRefs[e.Src].Node)
+				// prev = prevNode.Tail
 			} else {
-				// The only reason to have an edge to a NodeRef is if the NodeRef is a src or
-				// snk node, otherwise the contents should have just been combined into a single
-				// node.  Since we're looking at incoming edges, the only valid form is FormFileSrc.
+				// The only reason that an edge would point to a NewContent is if it is a src node,
+				// otherwise the contents should have just been combined into a single node.  Since
+				// we're looking at incoming edges, the only valid form is FormFileSrc.
 				content := c.Contents[e.Src-len(c.NodeRefs)]
 				if content.Form != FormFileSrc {
 					return fmt.Errorf("malformed commit: edge connected something other than FormFile or FormFileSrc to another FormFile")
@@ -391,10 +427,12 @@ func Apply(r Repo, c *Commit) error {
 				prev = fmt.Sprintf("src:%s", content.Path)
 			}
 		}
+
 		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
 		r.PutNode(n)
 		r.PutRef(n.Tail, n.Head)
-		newNodes = append(newNodes, n.Head)
+		newns = append(newns, n)
+		// newNodes = append(newNodes, n.Head)
 	}
 
 	// TODO: We might want transactions to be recursive, so that we can split nodes here and, if the
@@ -412,42 +450,35 @@ func Apply(r Repo, c *Commit) error {
 		depsMap[dep] = true
 	}
 
+	// Add in all of the edges required by this commit.
+	getNode := func(n int) *Node {
+		if n < 0 || n > len(c.NodeRefs)+len(c.Contents) {
+			panic("invalid index passed to getNode")
+		}
+		if n < len(c.NodeRefs) {
+			return refs[n]
+		}
+		return newns[n-len(c.NodeRefs)]
+	}
+	fmt.Printf("%d Refs:\n", len(refs))
+	for i, r := range refs {
+		fmt.Printf("%d: %s -> %v\n", i, c.NodeRefs[i].Node, r)
+	}
+	fmt.Printf("%d NewNodes:\n", len(newns))
+	for i, r := range newns {
+		fmt.Printf("%d: %v\n", i, r)
+	}
 	for _, e := range c.EdgeRefs {
-		var srcNode, dstNode *Node
-		var dstHead string
-		if e.Src < len(c.NodeRefs) {
-			tail, _, err := SplitNode(r, c.NodeRefs[e.Src].Node, c.NodeRefs[e.Src].Depth)
-			if err != nil {
-				return fmt.Errorf("lame split error: %v", err)
-			}
-			srcNode = r.GetNode(r.GetRef(tail))
-			// fmt.Printf("%q -> %q -> %v\n", tail, r.GetRef(tail), srcNode)
-		} else {
-			srcNode = r.GetNode(newNodes[e.Src-len(c.NodeRefs)])
-		}
-
-		switch {
-		case e.Dst == -2:
-			panic("not implemented yet")
-		case e.Dst >= 0 && e.Dst < len(c.NodeRefs):
-			var err error
-			_, dstHead, err = SplitNode(r, c.NodeRefs[e.Dst].Node, c.NodeRefs[e.Dst].Depth-1)
-			if err != nil {
-				return fmt.Errorf("lame split error: %v", err)
-			}
-			dstNode = r.GetNode(dstHead)
-		case e.Dst >= len(c.NodeRefs):
-			dstNode = r.GetNode(newNodes[e.Dst-len(c.NodeRefs)])
-			dstHead = dstNode.Head
-		default:
-			panic(fmt.Sprintf("what the beans?  got dst %d", e.Dst))
-		}
-		// fmt.Printf("Out: %q -> %q\n", srcNode.Tail, dstHead)
+		srcNode := getNode(e.Src)
+		dstNode := getNode(e.Dst)
 		srcNode.Out = append(srcNode.Out, Edge{
 			Commit:  commitHash,
-			Node:    dstHead,
+			Node:    dstNode.Head,
 			Primary: true,
 		})
+
+		// TODO: outDeps are currently not used, and I think if they are going to be useful that we
+		// also need inDeps, but I'm not sure if we actually need them.
 		var outDeps []int
 		for i := range srcNode.Out {
 			if depsMap[srcNode.Out[i].Commit] {
@@ -457,15 +488,13 @@ func Apply(r Repo, c *Commit) error {
 		srcNode.OutDeps = append(srcNode.OutDeps, outDeps)
 		r.PutNode(srcNode)
 
-		if dstNode != nil {
-			// fmt.Printf("In: %q <- %q\n", srcNode.Tail, dstNode.Head)
-			dstNode.In = append(dstNode.In, Edge{
-				Commit:  commitHash,
-				Node:    srcNode.Tail,
-				Primary: true,
-			})
-			r.PutNode(dstNode)
-		}
+		dstNode.In = append(dstNode.In, Edge{
+			Commit:  commitHash,
+			Node:    srcNode.Tail,
+			Primary: true,
+		})
+		r.PutNode(dstNode)
+		fmt.Printf("added edge form %s to %s\n", srcNode.Tail, dstNode.Head)
 	}
 
 	r.PutCommit(c)

@@ -113,7 +113,7 @@ func TestCommits(t *testing.T) {
 				},
 				{
 					Form:    graph.FormText,
-					Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
+					Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"),
 				},
 				{
 					Path: "foo.txt",
@@ -136,9 +136,9 @@ func TestCommits(t *testing.T) {
 				Contents: nil,
 			}
 			So(graph.Apply(r, c1), ShouldBeNil)
-			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
 			So(err, ShouldBeNil)
-			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.charlie.delta.echo")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "bravo.charlie.delta.echo.foxtrot.golf")
 		})
 
 		Convey("can modify the first line of a file", func() {
@@ -153,13 +153,13 @@ func TestCommits(t *testing.T) {
 					{Node: "src:foo.txt", Depth: 3}, // 'bravo'
 				},
 				Contents: []graph.NewContent{
-					{Content: stringsToContent("BRAVO")},
+					{Content: stringsToContent("ALPHA")},
 				},
 			}
 			So(graph.Apply(r, c1), ShouldBeNil)
-			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
 			So(err, ShouldBeNil)
-			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.BRAVO.charlie.delta.echo")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "ALPHA.bravo.charlie.delta.echo.foxtrot.golf")
 		})
 
 		Convey("can delete the last line of a file", func() {
@@ -169,15 +169,15 @@ func TestCommits(t *testing.T) {
 					{Src: 0, Dst: 1},
 				},
 				NodeRefs: []graph.NodeRef{
-					{Node: "src:foo.txt", Depth: 4}, // 'delta'
+					{Node: "src:foo.txt", Depth: 7}, // 'foxtrot'
 					{Node: "snk:foo.txt", Depth: 0},
 				},
 				Contents: nil,
 			}
 			So(graph.Apply(r, c1), ShouldBeNil)
-			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
 			So(err, ShouldBeNil)
-			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot")
 		})
 
 		Convey("can modify the last line of a file", func() {
@@ -188,17 +188,111 @@ func TestCommits(t *testing.T) {
 					{Src: 2, Dst: 1},
 				},
 				NodeRefs: []graph.NodeRef{
-					{Node: "src:foo.txt", Depth: 4}, // 'delta'
+					{Node: "src:foo.txt", Depth: 7}, // 'foxtrot'
 					{Node: "snk:foo.txt", Depth: 0},
 				},
 				Contents: []graph.NewContent{
-					{Content: stringsToContent("ECHO")},
+					{Content: stringsToContent("GOLF")},
 				},
 			}
 			So(graph.Apply(r, c1), ShouldBeNil)
-			data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
 			So(err, ShouldBeNil)
-			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.ECHO")
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.GOLF")
+		})
+
+		Convey("can move the first line of a file into the middle of the file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 2},
+					{Src: 3, Dst: 1},
+					{Src: 1, Dst: 4},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 0},
+					{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+					{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				},
+				Contents: []graph.NewContent{},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "bravo.charlie.delta.alpha.echo.foxtrot.golf")
+		})
+
+		Convey("can move the last line of a file into the middle of the file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 3},
+					{Src: 3, Dst: 1},
+					{Src: 2, Dst: 4},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 4}, // 'charlie'
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 7}, // 'foxtrot'
+					{Node: "src:foo.txt", Depth: 8}, // 'golf'
+					{Node: "snk:foo.txt", Depth: 0},
+				},
+				Contents: []graph.NewContent{},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.golf.delta.echo.foxtrot")
+		})
+
+		Convey("can move the first two lines of a file into the middle of the file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 3},
+					{Src: 4, Dst: 1},
+					{Src: 2, Dst: 5},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 0},
+					{Node: "src:foo.txt", Depth: 2}, // 'alpha'
+					{Node: "src:foo.txt", Depth: 3}, // 'bravo'
+					{Node: "src:foo.txt", Depth: 4}, // 'charlie'
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+				},
+				Contents: []graph.NewContent{},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "charlie.delta.alpha.bravo.echo.foxtrot.golf")
+		})
+
+		Convey("can move the last two lines of a file into the middle of the file", func() {
+			c1 := &graph.Commit{
+				Deps: []string{c0.Hash()},
+				EdgeRefs: []graph.EdgeRef{
+					{Src: 0, Dst: 3},
+					{Src: 4, Dst: 1},
+					{Src: 2, Dst: 5},
+				},
+				NodeRefs: []graph.NodeRef{
+					{Node: "src:foo.txt", Depth: 4}, // 'charlie'
+					{Node: "src:foo.txt", Depth: 5}, // 'delta'
+					{Node: "src:foo.txt", Depth: 6}, // 'echo'
+					{Node: "src:foo.txt", Depth: 7}, // 'foxtrot'
+					{Node: "src:foo.txt", Depth: 8}, // 'golf'
+					{Node: "snk:foo.txt", Depth: 0},
+				},
+				Contents: []graph.NewContent{},
+			}
+			So(graph.Apply(r, c1), ShouldBeNil)
+			data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{})
+			So(err, ShouldBeNil)
+			So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.foxtrot.golf.delta.echo")
 		})
 	})
 }
