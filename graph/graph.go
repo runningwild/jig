@@ -39,6 +39,7 @@ type Repo interface {
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
+	fmt.Printf("Splitting %s @ %d\n", node, depth)
 	if depth <= 0 {
 		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
@@ -51,9 +52,13 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		return "", "", fmt.Errorf("depth is beyond original node's length")
 	}
 
-	// For simplicity we'll just special case splitting at the very beginning of a file.
+	// For simplicity we'll just special case splitting at the very beginning of a file...
 	if n.Form == FormFileSrc && depth == 1 {
-		return n.Tail, n.Out[0].Node, nil
+		return n.Tail, "", nil
+	}
+	// ... and the very end.
+	if n.Form == FormFileSnk && depth == 0 {
+		return "", n.Head, nil
 	}
 
 	commitHash := n.In[0].Commit
@@ -332,129 +337,149 @@ func Apply(r Repo, c *Commit) error {
 	//   no cycles
 	//   no creation of two edges from or to the same node
 	//   really there are so many more...
+	//   new content nodes do not connect to other new content nodes
+	//   new content nodes have an input and output edge
 
-	// Split all nodes at the appropriate positions.  It's important to go through EdgeRefs to see
-	// where to split because we need to split before or after a node depending on if we're using
-	// that node as a src or dst.
 	for _, e := range c.EdgeRefs {
-		if e.Src >= 0 && e.Src < len(c.NodeRefs) {
-			ref := c.NodeRefs[e.Src]
-			if ref.Depth <= 0 {
-				return fmt.Errorf("cannot specify a src node with depth <= 0 (%s @ %d)", ref.Node, ref.Depth)
-			}
-			if _, _, err := SplitNode(r, ref.Node, ref.Depth); err != nil {
-				return fmt.Errorf("error splitting src node %q: %v", ref.Node, err)
-			}
-
+		if e.Src.Depth < 1 && !strings.HasPrefix(e.Src.Node, "src:") {
+			return fmt.Errorf("cannot specify an EdgeRef with a content src node at depth < 1")
 		}
-		if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
-			ref := c.NodeRefs[e.Dst]
-			if ref.Depth < 0 {
-				return fmt.Errorf("cannot specify a dst node with depth < 0 (%s @ %d)", ref.Node, ref.Depth)
-			}
-			if ref.Depth == 0 {
-				// Avoid trying to split this node, because we can't do that at depth 0, we can
-				// still use it as a dst node, though.
-				continue
-			}
-			if _, _, err := SplitNode(r, ref.Node, ref.Depth-1); err != nil {
-				return fmt.Errorf("error splitting dst node %q: %v", ref.Node, err)
-			}
+		if e.Src.Depth < 0 && !strings.HasPrefix(e.Src.Node, "snk:") {
+			return fmt.Errorf("cannot specify an EdgeRef with a content dst node at depth < 0")
 		}
 	}
 
-	// Get a slice of all nodes that matches the commit's NodeRefs.  This way a node that was split
-	// multiple times will still end up in this slice with the appropriate sub-node.
-	var refs []*Node
-	for _, ref := range c.NodeRefs {
-		if (strings.HasPrefix(ref.Node, "src:") || strings.HasPrefix(ref.Node, "snk:")) && ref.Depth == 0 {
-			refs = append(refs, r.GetNode(ref.Node))
+	for _, e := range c.EdgeRefs {
+		var tail, head string
+
+		// Create src and snk nodes if they don't already exist.
+		if strings.HasPrefix(e.Src.Node, "src:") {
+			r.PutNode(&Node{Head: e.Src.Node, Tail: e.Src.Node, Form: FormFileSrc, Count: 1})
+			r.PutRef(e.Src.Node, e.Src.Node)
+		}
+		if strings.HasPrefix(e.Dst.Node, "snk:") {
+			r.PutNode(&Node{Head: e.Dst.Node, Tail: e.Dst.Node, Form: FormFileSnk, Count: 1})
+			r.PutRef(e.Dst.Node, e.Dst.Node)
+		}
+
+		var err error
+		fmt.Printf("Splitting src node %q at %d\n", e.Src.Node, e.Src.Depth)
+		tail, _, err = SplitNode(r, e.Src.Node, e.Src.Depth)
+		if err != nil {
+			return fmt.Errorf("error splitting src node: %v", err)
+		}
+
+		if e.Dst.Depth == 0 {
+			// This is fine, this just means an edge will connect directly to e.Dst and we don't
+			// need to split anything to make that happen.
+			head = e.Dst.Node
 		} else {
-			fmt.Printf("Splitting %s at %d\n", ref.Node, ref.Depth)
-			if ref.Depth == 0 {
-				// We know this is a dst node, because we've already checked that no src nodes have
-				// depth <= 0.
-				refs = append(refs, r.GetNode(ref.Node))
-				continue
-			}
-			tail, _, err := SplitNode(r, ref.Node, ref.Depth)
+			var err error
+			_, head, err = SplitNode(r, e.Dst.Node, e.Dst.Depth)
 			if err != nil {
-				return fmt.Errorf("error re-splitting node %q at depth %d: %v", ref.Node, ref.Depth, err)
+				return fmt.Errorf("error splitting dst node: %v", err)
 			}
-			fmt.Printf("Got %s -> %s: %s\n", tail, r.GetRef(tail), nodeContent(r, r.GetRef(tail)))
-			ref := r.GetNode(r.GetRef(tail))
-			// if ref == nil {
-			// 	fmt.Printf("NIL REF: %s %s\n", tail, r.GetRef(tail))
-			// }
-			refs = append(refs, ref)
 		}
-	}
 
-	// Create all of the new nodes added by this commit.
-	// NEXT: We're rewriting this function because I think it was subtly buggy.  Probably want to start by making
-	// the newNodes variable be a slice of *Node rather than string.
-	var newns []*Node
-	// var newNodes []string
-	for i, nc := range c.Contents {
-		if nc.Form == FormFileSrc || nc.Form == FormFileSnk {
-			mode := "src"
-			if nc.Form == FormFileSnk {
-				mode = "snk"
-			}
-			n := &Node{
-				Head:  fmt.Sprintf("%s:%s", mode, nc.Path),
-				Form:  nc.Form,
-				Count: 1,
-			}
-			n.Tail = n.Head
-			fmt.Printf("Putting %s\n", n.Head)
-			r.PutNode(n)
-			r.PutRef(n.Tail, n.Head)
-			newns = append(newns, n)
-			// newNodes = append(newNodes, n.Head)
+		srcRef := r.GetRef(tail)
+		if srcRef == "" {
+			return fmt.Errorf("failed to get ref for %s", tail)
+		}
+		src := r.GetNode(srcRef)
+		if src == nil {
+			return fmt.Errorf("failed to get node for ref %s from tail %s", srcRef, tail)
+		}
+		dst := r.GetNode(head)
+
+		if e.Content == nil {
+			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Primary: true})
+			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Primary: true})
+			r.PutNode(src)
+			r.PutNode(dst)
 			continue
 		}
-		n := &Node{
-			Form:    nc.Form,
-			Content: HashContent(nc.Content), // Content hash
-			Count:   len(nc.Content),
+
+		content := r.PutContent(e.Content.Content)
+		newHead, newTail := CalculateNodeHashes(commitHash, tail, e.Content.Form, e.Content.Content)
+		middle := &Node{
+			Head:    newHead,
+			Tail:    newTail,
+			Form:    e.Content.Form,
+			Content: content,
+			Count:   len(e.Content.Content),
+			In: []Edge{{
+				Commit:  commitHash,
+				Node:    tail,
+				Primary: true,
+			}},
+			Out: []Edge{{
+				Commit:  commitHash,
+				Node:    head,
+				Primary: true,
+			}},
+			OutDeps: [][]int{}, // WHY AM I STILL DOING THIS!?!?!??!?
 		}
+		r.PutNode(middle)
 
-		var prev string
+		src.Out = append(src.Out, Edge{Commit: commitHash, Node: middle.Head, Primary: true})
+		dst.In = append(dst.In, Edge{Commit: commitHash, Node: middle.Tail, Primary: true})
+		r.PutNode(src)
+		r.PutNode(dst)
 
-		// We need to know the previous node's hash to calculate this node's hash.  If this is a
-		// new file then it's just the path, otherwise we need to look through the edges to find
-		// which one is pointing to this node, the other end of that edge will be the previous node.
-		for _, e := range c.EdgeRefs {
-			if e.Dst != len(c.NodeRefs)+i {
-				continue
-			}
-			// var prevNode *Node
-			if e.Src < len(c.NodeRefs) {
-				if refs[e.Src] == nil {
-					fmt.Printf("NILED REF: %d -> %v\n", e.Src, refs[e.Src])
-				}
-				prev = refs[e.Src].Tail
-				// prevNode = r.GetNode(c.NodeRefs[e.Src].Node)
-				// prev = prevNode.Tail
-			} else {
-				// The only reason that an edge would point to a NewContent is if it is a src node,
-				// otherwise the contents should have just been combined into a single node.  Since
-				// we're looking at incoming edges, the only valid form is FormFileSrc.
-				content := c.Contents[e.Src-len(c.NodeRefs)]
-				if content.Form != FormFileSrc {
-					return fmt.Errorf("malformed commit: edge connected something other than FormFile or FormFileSrc to another FormFile")
-				}
-				prev = fmt.Sprintf("src:%s", content.Path)
-			}
-		}
+		// if e.Src >= 0 && e.Src < len(c.NodeRefs) {
+		// 	ref := c.NodeRefs[e.Src]
+		// 	if ref.Depth <= 0 {
+		// 		return fmt.Errorf("cannot specify a src node with depth <= 0 (%s @ %d)", ref.Node, ref.Depth)
+		// 	}
+		// 	if _, _, err := SplitNode(r, ref.Node, ref.Depth); err != nil {
+		// 		return fmt.Errorf("error splitting src node %q: %v", ref.Node, err)
+		// 	}
 
-		n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
-		r.PutNode(n)
-		r.PutRef(n.Tail, n.Head)
-		newns = append(newns, n)
-		// newNodes = append(newNodes, n.Head)
+		// }
+		// if e.Dst >= 0 && e.Dst < len(c.NodeRefs) {
+		// 	ref := c.NodeRefs[e.Dst]
+		// 	if ref.Depth < 0 {
+		// 		return fmt.Errorf("cannot specify a dst node with depth < 0 (%s @ %d)", ref.Node, ref.Depth)
+		// 	}
+		// 	if ref.Depth == 0 {
+		// 		// Avoid trying to split this node, because we can't do that at depth 0, we can
+		// 		// still use it as a dst node, though.
+		// 		continue
+		// 	}
+		// 	if _, _, err := SplitNode(r, ref.Node, ref.Depth-1); err != nil {
+		// 		return fmt.Errorf("error splitting dst node %q: %v", ref.Node, err)
+		// 	}
+		// }
 	}
+
+	r.PutCommit(c)
+
+	// // Get a slice of all nodes that matches the commit's NodeRefs.  This way a node that was split
+	// // multiple times will still end up in this slice with the appropriate sub-node.
+	// var refs []*Node
+	// for _, ref := range c.NodeRefs {
+	// 	if (strings.HasPrefix(ref.Node, "src:") || strings.HasPrefix(ref.Node, "snk:")) && ref.Depth == 0 {
+	// 		refs = append(refs, r.GetNode(ref.Node))
+	// 	} else {
+	// 		fmt.Printf("Splitting %s at %d\n", ref.Node, ref.Depth)
+	// 		if ref.Depth == 0 {
+	// 			// We know this is a dst node, because we've already checked that no src nodes have
+	// 			// depth <= 0.
+	// 			refs = append(refs, r.GetNode(ref.Node))
+	// 			continue
+	// 		}
+	// 		tail, _, err := SplitNode(r, ref.Node, ref.Depth)
+	// 		if err != nil {
+	// 			return fmt.Errorf("error re-splitting node %q at depth %d: %v", ref.Node, ref.Depth, err)
+	// 		}
+	// 		fmt.Printf("Got %s -> %s: %s\n", tail, r.GetRef(tail), nodeContent(r, r.GetRef(tail)))
+	// 		ref := r.GetNode(r.GetRef(tail))
+	// 		// if ref == nil {
+	// 		// 	fmt.Printf("NIL REF: %s %s\n", tail, r.GetRef(tail))
+	// 		// }
+	// 		refs = append(refs, ref)
+	// 	}
+	// }
 
 	// TODO: We might want transactions to be recursive, so that we can split nodes here and, if the
 	// commit fails to apply, unsplit them for free.
@@ -462,81 +487,150 @@ func Apply(r Repo, c *Commit) error {
 	// r.StartTransaction()
 	// defer r.EndTransaction()
 
-	for _, nc := range c.Contents {
-		r.PutContent(nc.Content)
-	}
+	// for _, nc := range c.Contents {
+	// 	r.PutContent(nc.Content)
+	// }
 
-	depsMap := make(map[string]bool)
-	for _, dep := range c.Deps {
-		depsMap[dep] = true
-	}
+	// // Create all of the new nodes added by this commit.
+	// for i, nc := range c.Contents {
+	// 	if nc.Form == FormFileSrc || nc.Form == FormFileSnk {
+	// 		mode := "src"
+	// 		if nc.Form == FormFileSnk {
+	// 			mode = "snk"
+	// 		}
+	// 		n := &Node{
+	// 			Head:  fmt.Sprintf("%s:%s", mode, nc.Path),
+	// 			Form:  nc.Form,
+	// 			Count: 1,
+	// 		}
+	// 		n.Tail = n.Head
+	// 		fmt.Printf("Putting %s\n", n.Head)
+	// 		r.PutNode(n)
+	// 		r.PutRef(n.Tail, n.Head)
+	// 		newns = append(newns, n)
+	// 		// newNodes = append(newNodes, n.Head)
+	// 		continue
+	// 	}
+	// 	n := &Node{
+	// 		Form:    nc.Form,
+	// 		Content: HashContent(nc.Content), // Content hash
+	// 		Count:   len(nc.Content),
+	// 	}
 
-	// Add in all of the edges required by this commit.
-	getNode := func(n int) *Node {
-		if n < 0 || n > len(c.NodeRefs)+len(c.Contents) {
-			panic("invalid index passed to getNode")
-		}
-		if n < len(c.NodeRefs) {
-			return refs[n]
-		}
-		return newns[n-len(c.NodeRefs)]
-	}
-	fmt.Printf("%d Refs:\n", len(refs))
-	for i, r := range refs {
-		fmt.Printf("%d: %s -> %v\n", i, c.NodeRefs[i].Node, r)
-	}
-	fmt.Printf("%d NewNodes:\n", len(newns))
-	for i, r := range newns {
-		fmt.Printf("%d: %v\n", i, r)
-	}
-	for _, e := range c.EdgeRefs {
-		srcNode := getNode(e.Src)
-		dstNode := getNode(e.Dst)
-		srcNode.Out = append(srcNode.Out, Edge{
-			Commit:  commitHash,
-			Node:    dstNode.Head,
-			Primary: true,
-		})
+	// 	var prev string
 
-		// TODO: outDeps are currently not used, and I think if they are going to be useful that we
-		// also need inDeps, but I'm not sure if we actually need them.
-		var outDeps []int
-		for i := range srcNode.Out {
-			if depsMap[srcNode.Out[i].Commit] {
-				outDeps = append(outDeps, i)
-			}
-		}
-		srcNode.OutDeps = append(srcNode.OutDeps, outDeps)
-		r.PutNode(srcNode)
+	// 	// We need to know the previous node's hash to calculate this node's hash.  If this is a
+	// 	// new file then it's just the path, otherwise we need to look through the edges to find
+	// 	// which one is pointing to this node, the other end of that edge will be the previous node.
+	// 	for _, e := range c.EdgeRefs {
+	// 		if e.Dst != len(c.NodeRefs)+i {
+	// 			continue
+	// 		}
+	// 		// var prevNode *Node
+	// 		if e.Src < len(c.NodeRefs) {
+	// 			if refs[e.Src] == nil {
+	// 				fmt.Printf("NILED REF: %d -> %v\n", e.Src, refs[e.Src])
+	// 			}
+	// 			prev = refs[e.Src].Tail
+	// 			// prevNode = r.GetNode(c.NodeRefs[e.Src].Node)
+	// 			// prev = prevNode.Tail
+	// 		} else {
+	// 			// The only reason that an edge would point to a NewContent is if it is a src node,
+	// 			// otherwise the contents should have just been combined into a single node.  Since
+	// 			// we're looking at incoming edges, the only valid form is FormFileSrc.
+	// 			content := c.Contents[e.Src-len(c.NodeRefs)]
+	// 			if content.Form != FormFileSrc {
+	// 				return fmt.Errorf("malformed commit: edge connected something other than FormFile or FormFileSrc to another FormFile")
+	// 			}
+	// 			prev = fmt.Sprintf("src:%s", content.Path)
+	// 		}
+	// 	}
 
-		dstNode.In = append(dstNode.In, Edge{
-			Commit:  commitHash,
-			Node:    srcNode.Tail,
-			Primary: true,
-		})
-		r.PutNode(dstNode)
-		fmt.Printf("added edge form %s to %s\n", srcNode.Tail, dstNode.Head)
-	}
+	// 	n.Head, n.Tail = CalculateNodeHashes(commitHash, prev, n.Form, nc.Content)
+	// 	r.PutNode(n)
+	// 	r.PutRef(n.Tail, n.Head)
+	// 	newns = append(newns, n)
+	// 	// newNodes = append(newNodes, n.Head)
+	// }
 
-	r.PutCommit(c)
+	// depsMap := make(map[string]bool)
+	// for _, dep := range c.Deps {
+	// 	depsMap[dep] = true
+	// }
+
+	// // Add in all of the edges required by this commit.
+	// getNode := func(n int) *Node {
+	// 	if n < 0 || n > len(c.NodeRefs)+len(c.Contents) {
+	// 		panic("invalid index passed to getNode")
+	// 	}
+	// 	if n < len(c.NodeRefs) {
+	// 		return refs[n]
+	// 	}
+	// 	return newns[n-len(c.NodeRefs)]
+	// }
+	// fmt.Printf("%d Refs:\n", len(refs))
+	// for i, r := range refs {
+	// 	fmt.Printf("%d: %s -> %v\n", i, c.NodeRefs[i].Node, r)
+	// }
+	// fmt.Printf("%d NewNodes:\n", len(newns))
+	// for i, r := range newns {
+	// 	fmt.Printf("%d: %v\n", i, r)
+	// }
+	// for _, e := range c.EdgeRefs {
+	// 	srcNode := getNode(e.Src)
+	// 	dstNode := getNode(e.Dst)
+	// 	srcNode.Out = append(srcNode.Out, Edge{
+	// 		Commit:  commitHash,
+	// 		Node:    dstNode.Head,
+	// 		Primary: true,
+	// 	})
+
+	// 	// TODO: outDeps are currently not used, and I think if they are going to be useful that we
+	// 	// also need inDeps, but I'm not sure if we actually need them.
+	// 	var outDeps []int
+	// 	for i := range srcNode.Out {
+	// 		if depsMap[srcNode.Out[i].Commit] {
+	// 			outDeps = append(outDeps, i)
+	// 		}
+	// 	}
+	// 	srcNode.OutDeps = append(srcNode.OutDeps, outDeps)
+	// 	r.PutNode(srcNode)
+
+	// 	dstNode.In = append(dstNode.In, Edge{
+	// 		Commit:  commitHash,
+	// 		Node:    srcNode.Tail,
+	// 		Primary: true,
+	// 	})
+	// 	r.PutNode(dstNode)
+	// 	fmt.Printf("added edge form %s to %s\n", srcNode.Tail, dstNode.Head)
+	// }
+
+	// r.PutCommit(c)
 	return nil
 }
 
 type EdgeRef struct {
-	Src, Dst int // indexes into NodeRefs and Contents
-	// Now we specify the snk node explicitly  // Dst == -1: "1", this is an EOF
-	// Dst == -2: "2", this file was deleted (must come from a ref to a file)
+	Src, Dst NodeRef
+
+	// Content inserted between Src and Dst.  This can be nil, in which case the edge created by
+	// this EdgeRef connects Src directly to Dst.
+	Content *NewContent
 }
 
 type NodeRef struct {
-	Node  string
+	// Typical hash of the node that this NodeRef refers to.  This may also refer to nodes that are
+	// created by this commit.
+	Node string
+
+	// Depth indicates how many nodes should be used before inserting the edge in question.  For
+	// example, if there are nodes connected like A -> B -> C and a src node specifies node A with
+	// depth 2, that refers to an outgoing edge B, but a dst node that specifies node A with depth 2
+	// is referring to an incoming edge into C.  Because of this a src node must specify Depth >= 1,
+	// a dst node must specify Depth >= 0.
 	Depth int
 }
 
 type NewContent struct {
-	// Path can be empty, if so it is additional data added into an existing file.
-	Path string
-
 	Form    Form
 	Content [][]byte
 }
@@ -544,8 +638,6 @@ type NewContent struct {
 type Commit struct {
 	Deps     []string // Commit hashes
 	EdgeRefs []EdgeRef
-	NodeRefs []NodeRef
-	Contents []NewContent
 }
 
 func (c *Commit) Hash() string {
@@ -559,23 +651,24 @@ func (c *Commit) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.EdgeRefs)))
 	for _, e := range c.EdgeRefs {
-		binary.Write(h, binary.LittleEndian, uint32(e.Src))
-		binary.Write(h, binary.LittleEndian, uint32(e.Dst))
+		binary.Write(h, binary.LittleEndian, []byte(e.Src.Node))
+		binary.Write(h, binary.LittleEndian, uint32(e.Src.Depth))
+
+		if e.Content == nil {
+			binary.Write(h, binary.LittleEndian, uint32(0))
+		} else {
+			binary.Write(h, binary.LittleEndian, uint32(e.Content.Form))
+			binary.Write(h, binary.LittleEndian, uint32(len(e.Content.Content)))
+			for _, line := range e.Content.Content {
+				binary.Write(h, binary.LittleEndian, uint32(len(line)))
+				binary.Write(h, binary.LittleEndian, []byte(line))
+			}
+		}
+
+		binary.Write(h, binary.LittleEndian, []byte(e.Dst.Node))
+		binary.Write(h, binary.LittleEndian, uint32(e.Dst.Depth))
 	}
 
-	binary.Write(h, binary.LittleEndian, uint32(len(c.NodeRefs)))
-	for _, n := range c.NodeRefs {
-		binary.Write(h, binary.LittleEndian, uint32(len(n.Node)))
-		h.Write([]byte(n.Node))
-		binary.Write(h, binary.LittleEndian, uint32(n.Depth))
-	}
-
-	binary.Write(h, binary.LittleEndian, uint32(len(c.Contents)))
-	for _, c := range c.Contents {
-		hash := HashContent(c.Content)
-		binary.Write(h, binary.LittleEndian, uint32(len(hash)))
-		h.Write([]byte(hash))
-	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
@@ -605,9 +698,11 @@ type Node struct {
 	In []Edge
 
 	// Out edges come from different commits.  When traversing we need to select the newest one that
-	// is in the transitive closure of our frontier.  If the file is not in conflict, then the edges
-	// out will all belong to a single path in the commit dag by definition.
-	// Out[i] depends on Out[OutDeps[i][0]] .. Out[OutDeps[i][n-1]]
+	// is in the transitive closure of our frontier.  Because edges can only be added once the
+	// commits the depend on have been added, the commits corresponding to the edges in these list
+	// are necessarily a topologicaly ordered subset of all commits, as such if the frontier
+	// contains all commits and this file is not in conflict, then the correct edge to follow is
+	// always the last edge in the list.
 	Out     []Edge
 	OutDeps [][]int
 }
