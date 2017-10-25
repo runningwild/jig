@@ -217,7 +217,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 
 	readDepth := 0
 	for {
-		fmt.Printf("On node %q\n", n.Head)
+		fmt.Printf("On node %q: %s\n", n.Head, nodeContent(r, n.Head))
 		for i := len(n.Out) - 1; i >= 0; i-- {
 			e := n.Out[i]
 			if !f.Observes(e.Commit) {
@@ -244,6 +244,8 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		buf = append(buf, content...)
 		if metadata.Ranges != nil {
 			ref, depth := nodeRef(r, n)
+			fmt.Printf("Node Reffing %v\n", n)
+			fmt.Printf("nodeRef(%s) -> %s %d\n", n.Head, ref, depth)
 			*metadata.Ranges = append(*metadata.Ranges, ReadRange{Commit: nodeCommit(n), Node: ref, Depth: depth, ReadDepth: readDepth, Length: len(content)})
 			readDepth += len(content)
 		}
@@ -290,7 +292,7 @@ type ReadMetadata struct {
 }
 
 // ReadRange indicates what commit was responsible for content in a file, and how many contiguous
-// rows it was responsible for.
+// nodes it was responsible for.
 type ReadRange struct {
 	Commit    string
 	Node      string
@@ -390,7 +392,9 @@ func Apply(r Repo, c *Commit) error {
 			return fmt.Errorf("failed to get node for ref %s from tail %s", srcRef, tail)
 		}
 		dst := r.GetNode(head)
-
+		if dst == nil {
+			return fmt.Errorf("failed to get dst node %s", head)
+		}
 		if e.Content == nil {
 			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Primary: true})
 			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Primary: true})

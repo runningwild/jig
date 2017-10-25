@@ -13,26 +13,20 @@ import (
 func main() {
 	r := testutils.MakeFakeRepo()
 	c0 := &graph.Commit{
-		Deps:     nil,
-		EdgeRefs: []graph.EdgeRef{{0, 1}, {1, 2}},
-		Contents: []graph.NewContent{
+		Deps: nil,
+		EdgeRefs: []graph.EdgeRef{
 			{
-				Path: "sample.txt",
-				Form: graph.FormFileSrc,
-			},
-			{
-				Form:    graph.FormText,
-				Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
-			},
-			{
-				Path: "sample.txt",
-				Form: graph.FormFileSnk,
+				Src:     graph.NodeRef{Node: "src:sample.txt", Depth: 1},
+				Content: &graph.NewContent{Form: graph.FormText, Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "")},
+				Dst:     graph.NodeRef{Node: "snk:sample.txt", Depth: 0},
 			},
 		},
 	}
+	fmt.Printf("Appling initial commit\n")
 	if err := graph.Apply(r, c0); err != nil {
 		panic(err)
 	}
+	fmt.Printf("Done appling initial commit\n")
 	data, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
 	if err != nil {
 		panic(err)
@@ -42,11 +36,19 @@ func main() {
 	}
 	c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
 	c1.Deps = append(c1.Deps, c0.Hash())
+
+	for i, e := range c1.EdgeRefs {
+		fmt.Printf("Edge %d/%d\n", i, len(c1.EdgeRefs))
+		fmt.Printf("  Src: %v\n", e.Src)
+		fmt.Printf("  Con: %v\n", e.Content)
+		fmt.Printf("  Dst: %v\n", e.Dst)
+	}
+
 	fmt.Printf("Applying commit: %v\n", c1)
 	if err := graph.Apply(r, c1); err != nil {
 		panic(fmt.Sprintf("failed to apply commit: %v", err))
 	}
-
+	fmt.Printf("Done applying commit: %v\n", c1)
 	data, err = graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
 	if err != nil {
 		panic(err)
@@ -55,19 +57,30 @@ func main() {
 		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india."))
 	}
 
-	// Let's remove 'delta'.  This will require two splits and a new edge.
-	// NEXT: we need a function that takes a list of depths and returns the appropriate node/depth pair to use as a node-ref.
-	//       this shouldn't depend on which commits are involved, but when we make the edges we'll need to determine those.
-	// head0, _, err := graph.SplitNode(r, "src:sample.txt", 3)
-	// So(err, ShouldBeNil)
-	// _, tail1, err := graph.SplitNode(r, "snk:sample.txt", 3)
-	// So(err, ShouldBeNil)
-	// c1 := &graph.Commit{
-	// 	Deps:     []string{c0.Hash()},
-	// 	EdgeRefs: []graph.EdgeRef{},
-	// 	Contents: nil,
-	// 	NodeRefs: []graph.NodeRef{},
-	// }
+	fmt.Printf("WORKING ON C2\n")
+	c2 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
+	c2.Deps = []string{c0.Hash(), c1.Hash()}
+	for i, e := range c2.EdgeRefs {
+		fmt.Printf("Edge %d/%d\n", i, len(c2.EdgeRefs))
+		fmt.Printf("  Src: %v\n", e.Src)
+		if e.Content == nil {
+			fmt.Printf("  Con: <nil>\n")
+		} else {
+			fmt.Printf("  Con: %v\n", contentToString(e.Content.Content))
+		}
+		fmt.Printf("  Dst: %v\n", e.Dst)
+	}
+	if err := graph.Apply(r, c2); err != nil {
+		panic(fmt.Sprintf("failed to apply commit: %v", err))
+	}
+
+	data, err = graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+	if err != nil {
+		panic(err)
+	}
+	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.ECHO.foxtrot.golf.hotel.india." {
+		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.ECHO.foxtrot.golf.hotel.india."))
+	}
 }
 
 func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *graph.Commit {
@@ -76,6 +89,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	if err != nil {
 		panic(err)
 	}
+
 	fmt.Printf("lines0: %s\n", lines0)
 	fmt.Printf("Ranges: %v\n", ranges)
 
@@ -98,43 +112,27 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	sort.Slice(css, func(i, j int) bool {
 		return css[i].Bi < css[j].Bi
 	})
-	fmt.Printf("css: %v\n", css)
 	total := 0
 
-	var monkeyNodes [][2]interface{}
-	var prevMonkey interface{}
-	type refspec struct {
-		src     bool
-		snk     bool
-		node    bool
-		content bool
-		index   int
-	}
-	var edges [][2]refspec
 	var c graph.Commit
 
-	prevMonkey = graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
-	prev := fmt.Sprintf("src:%s", path)
-	prevSpec := refspec{src: true, index: 0}
-	c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
+	curEdge := &graph.EdgeRef{
+		Src: graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1},
+	}
+	// prevMonkey = graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
+	// prev := fmt.Sprintf("src:%s", path)
+	// prevSpec := refspec{src: true, index: 0}
+	// c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
 
 	// Loop over the common substrings, this will cover the whole file, though we might need to fill
 	// in gaps with new content.
 	for _, cs := range css {
+		fmt.Printf("Common Substring(%s): Ai: %d,  Bi: %d,  Length: %d\n", contentToString(lines1[cs.Bi:cs.Bi+cs.Length]), cs.Ai, cs.Bi, cs.Length)
 		// If Bi has skipped ahead of the total then it can only be because there was new content
 		// inserted here that we need to account for.
 		if cs.Bi > total {
-			next := fmt.Sprintf("NEW(%q)", lines1[total:cs.Bi])
-			nextSpec := refspec{content: true, index: len(c.Contents)}
-			edges = append(edges, [2]refspec{prevSpec, nextSpec})
-			nextMonkey := graph.NewContent{Form: graph.FormText, Content: lines1[total:cs.Bi]}
-			monkeyNodes = append(monkeyNodes, [2]interface{}{prevMonkey, nextMonkey})
-			prevMonkey = nextMonkey
-			fmt.Printf("0 Adding edge spec: %v\n", edges[len(edges)-1])
-			fmt.Printf("EDGE: %s -> NEW(%s)\n", prev, next)
-			prev = next
-			prevSpec = nextSpec
-			c.Contents = append(c.Contents, graph.NewContent{Form: graph.FormText, Content: lines1[total:cs.Bi]})
+			fmt.Printf("New Content: %s\n", contentToString(lines1[total:cs.Bi]))
+			curEdge.Content = &graph.NewContent{Form: graph.FormText, Content: lines1[total:cs.Bi]}
 		}
 
 		// The next one or more lines are copied from the source file.
@@ -142,100 +140,47 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// This searches for the ReadRange that spans Bi, the start of the text copied from the
 		// source file.
 		n := sort.Search(len(ranges), func(index int) bool {
-			return ranges[index].Depth+ranges[index].Length >= cs.Bi
+			return ranges[index].ReadDepth+ranges[index].Length >= cs.Ai
 		})
-		next := fmt.Sprintf("REF(%s@%d)", ranges[n].Commit, ranges[n].Depth+cs.Bi-ranges[n].ReadDepth)
-		nextSpec := refspec{node: true, index: len(c.NodeRefs)}
-		c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + cs.Bi - ranges[n].ReadDepth})
-		edges = append(edges, [2]refspec{prevSpec, nextSpec})
-		monkeyNodes = append(monkeyNodes, [2]interface{}{prevMonkey, graph.NodeRef{Node: ranges[n].Node, Depth: 1 + ranges[n].Depth + cs.Bi - ranges[n].ReadDepth}})
-		fmt.Printf("1 Adding edge spec: %v\n", edges[len(edges)-1])
-		fmt.Printf("EDGE: %s -> %s\n", prev, next)
-		fmt.Printf("%d existing lines: %s\n", cs.Length, lines1[cs.Bi:cs.Bi+cs.Length])
+		fmt.Printf("Dst node: %s\n", ranges[n].Node)
+		fmt.Printf("Dst Depth: %d\n", ranges[n].Depth)
+
+		// unused is how much of the node isn't part of this common substring.  This can only be
+		// positive for the first ReadRange in a common substring, and it affects the dst node of
+		// the current edge, and potentially the src node of the next edge if we don't have to move
+		// to the next ReadRange.
+		unused := cs.Ai - ranges[n].ReadDepth
+
+		curEdge.Dst = graph.NodeRef{Node: ranges[n].Node, Depth: unused}
+		fmt.Printf("Setting Dst: %v\n", curEdge.Dst)
+		fmt.Printf("Using range: %v\n", ranges[n])
+		fmt.Printf("Inserting edge %d\n", len(c.EdgeRefs))
+		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+		curEdge = &graph.EdgeRef{}
+
 		i := cs.Bi
-		prev = fmt.Sprintf("beans!!")
-		prevMonkey = nil
 		for i < cs.Bi+cs.Length {
 			used := cs.Length
-			fmt.Printf("%d < %d\n", i, cs.Bi+cs.Length)
 			if used > ranges[n].Length {
 				used = ranges[n].Length
 			}
-			fmt.Printf("%d lines from %s\n", used, ranges[n].Commit)
-			fmt.Printf("i: %d\n", i)
-			i += ranges[n].Length
 			{
 				// This miiiight be right, but we need to test when the common substrings go over multiple
 				// nodes, that might screw this up.
-				prev = fmt.Sprintf("REFx(%s@%d)", ranges[n].Commit, i-ranges[n].Length+used)
-				prevSpec = refspec{node: true, index: len(c.NodeRefs)}
-				prevMonkey = graph.NodeRef{Node: ranges[n].Node, Depth: i - ranges[n].Length + used}
+				fmt.Printf("From range: %s\n", ranges[n].Node)
+				fmt.Printf("  Depth: %d\n", ranges[n].Depth)
+				fmt.Printf("  used, unused: %d %d\n", used, unused)
+				curEdge.Src = graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + unused + used}
+				fmt.Printf("  set src to %v\n", curEdge.Src)
 			}
-			fmt.Printf("i: %d\n", i)
+			i += ranges[n].Length
 			n++
+			unused = 0
 		}
 		total = cs.Bi + cs.Length
 	}
-	fmt.Printf("EDGE: %s -> %s\n", prev, fmt.Sprintf("snk:%s", path))
-	edges = append(edges, [2]refspec{prevSpec, refspec{snk: true, index: len(c.NodeRefs)}})
-	monkeyNodes = append(monkeyNodes, [2]interface{}{prevMonkey, graph.NodeRef{Node: fmt.Sprintf("snk:%s", path)}})
-	fmt.Printf("Adding edge spec: %v\n", edges[len(edges)-1])
-	c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("snk:%s", path)})
-	for _, edge := range edges {
-		if edge[0].content {
-			edge[0].index += len(c.NodeRefs)
-		}
-		if edge[1].content {
-			edge[1].index += len(c.NodeRefs)
-		}
-		c.EdgeRefs = append(c.EdgeRefs, graph.EdgeRef{Src: edge[0].index, Dst: edge[1].index})
-	}
-	fmt.Printf("%d monkey nodes\n", len(monkeyNodes))
-	for _, n := range monkeyNodes {
-		fmt.Printf("(%T - %v) -> (%T - %v)\n", n[0], n[0], n[1], n[1])
-	}
-	c.NodeRefs = nil
-	c.EdgeRefs = nil
-	numNodeRefs := 0
-	for _, mn := range monkeyNodes {
-		if _, ok := mn[0].(graph.NodeRef); ok {
-			numNodeRefs++
-		}
-		if _, ok := mn[1].(graph.NodeRef); ok && mn[1] != mn[0] {
-			numNodeRefs++
-		}
-	}
-	for _, mn := range monkeyNodes {
-		src, dst := mn[0], mn[1]
-		var srcIndex, dstIndex int
-		switch n := src.(type) {
-		case graph.NodeRef:
-			srcIndex = len(c.NodeRefs)
-			c.NodeRefs = append(c.NodeRefs, n)
-		case graph.NewContent:
-			srcIndex = len(c.Contents) + numNodeRefs
-			c.Contents = append(c.Contents, n)
-		default:
-			panic("idiot")
-		}
-		switch n := dst.(type) {
-		case graph.NodeRef:
-			dstIndex = len(c.NodeRefs)
-			c.NodeRefs = append(c.NodeRefs, n)
-		case graph.NewContent:
-			dstIndex = len(c.Contents) + numNodeRefs
-			// c.Contents = append(c.Contents, n)
-		default:
-			panic("idiot")
-		}
-		c.EdgeRefs = append(c.EdgeRefs, graph.EdgeRef{Src: srcIndex, Dst: dstIndex})
-	}
-	// return &graph.Commit{
-	// 	Deps:     nil,
-	// 	EdgeRefs: []*graph.EdgeRef{},
-	// 	NodeRefs: []*graph.NodeRef{},
-	// 	Contents: []*graph.NewContent{},
-	// }
+	curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
+	c.EdgeRefs = append(c.EdgeRefs, *curEdge)
 
 	return &c
 }
@@ -249,7 +194,7 @@ func stringsToContent(ss ...string) [][]byte {
 }
 
 func contentToString(content [][]byte) string {
-	return string(bytes.Join(content, []byte{'\n'}))
+	return string(bytes.Join(content, []byte{'.'}))
 }
 
 type allFrontier struct{}

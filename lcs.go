@@ -271,9 +271,9 @@ func LCS2(a, b []uint64) []CommonSubstring {
 		}
 	}
 	input[middle] = max + 1
-	start := time.Now()
+	// start := time.Now()
 	sa := InducedSuffixArray(input)
-	fmt.Printf("SA time: %v\n", time.Since(start))
+	// fmt.Printf("SA time: %v\n", time.Since(start))
 
 	var pairs [][3]int
 	for i := 0; i < len(sa)-1; i++ {
@@ -344,7 +344,7 @@ func LCS2(a, b []uint64) []CommonSubstring {
 				}
 			}
 		}
-		fmt.Printf("Got Common Substring: %v\n", cs)
+		// fmt.Printf("Got Common Substring: %v\n", cs)
 		if cs.Length == 0 {
 			break
 		}
@@ -358,14 +358,14 @@ func LCS2(a, b []uint64) []CommonSubstring {
 				count++
 			}
 		}
-		fmt.Printf("%d down to %d/%d\n", len(pairs), count, cs.Length)
-		if len(pairs) == 1 {
-			fmt.Printf("%v\n", pairs)
-		}
+		// fmt.Printf("%d down to %d/%d\n", len(pairs), count, cs.Length)
+		// if len(pairs) == 1 {
+		// 	fmt.Printf("%v\n", pairs)
+		// }
 		pairs = pairs[0:count]
 		css = append(css, cs)
 	}
-	fmt.Printf("Got %d runs with %d pairs remaining\n", len(css), len(pairs))
+	// fmt.Printf("Got %d runs with %d pairs remaining\n", len(css), len(pairs))
 	return css
 }
 
