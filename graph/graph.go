@@ -215,6 +215,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		buf = append(buf, content[len(content)-1])
 	}
 
+	used := make(map[string]struct{})
 	readDepth := 0
 	for {
 		fmt.Printf("On node %q: %s\n", n.Head, nodeContent(r, n.Head))
@@ -232,7 +233,13 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 			}
 			break
 		}
-		// TODO: check for cycles as we traverse
+
+		// Prevents traversing cycles more than once.
+		if _, ok := used[n.Head]; ok {
+			return nil, fmt.Errorf("file graph contains a cycle")
+		}
+		used[n.Head] = struct{}{}
+
 		if n == prev {
 			return nil, fmt.Errorf("failed to find an outgoing edge from %s", prev.Head)
 		}
@@ -244,8 +251,8 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		buf = append(buf, content...)
 		if metadata.Ranges != nil {
 			ref, depth := nodeRef(r, n)
-			fmt.Printf("Node Reffing %v\n", n)
-			fmt.Printf("nodeRef(%s) -> %s %d\n", n.Head, ref, depth)
+			// fmt.Printf("Node Reffing %v\n", n)
+			// fmt.Printf("nodeRef(%s) -> %s %d\n", n.Head, ref, depth)
 			*metadata.Ranges = append(*metadata.Ranges, ReadRange{Commit: nodeCommit(n), Node: ref, Depth: depth, ReadDepth: readDepth, Length: len(content)})
 			readDepth += len(content)
 		}
@@ -271,9 +278,9 @@ func nodeCommit(n *Node) string {
 }
 
 func nodeRef(r Repo, n *Node) (string, int) {
-	fmt.Printf("Getting ref for %s: %s\n", n.Head, nodeContent(r, n.Head))
+	// fmt.Printf("Getting ref for %s: %s\n", n.Head, nodeContent(r, n.Head))
 	prev := r.GetNode(r.GetRef(n.In[0].Node))
-	fmt.Printf("prev: %s\n", n.In[0].Node)
+	// fmt.Printf("prev: %s\n", n.In[0].Node)
 	if nodeCommit(prev) != nodeCommit(n) || prev.Form == FormFileSrc {
 		return n.Head, 0
 	}
@@ -424,6 +431,7 @@ func Apply(r Repo, c *Commit) error {
 			OutDeps: [][]int{}, // WHY AM I STILL DOING THIS!?!?!??!?
 		}
 		r.PutNode(middle)
+		r.PutRef(middle.Tail, middle.Head)
 
 		src.Out = append(src.Out, Edge{Commit: commitHash, Node: middle.Head, Primary: true})
 		dst.In = append(dst.In, Edge{Commit: commitHash, Node: middle.Tail, Primary: true})

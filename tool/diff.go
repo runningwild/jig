@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/runningwild/jig"
 	"github.com/runningwild/jig/graph"
@@ -34,7 +36,45 @@ func main() {
 	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india." {
 		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india."))
 	}
-	c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
+	fmt.Printf("*********************************************************************************************************\n")
+
+	allDeps := []string{c0.Hash()}
+	for _, expected := range []string{
+		"alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india.",
+		"alpha.bravo.golf.hotel.charlie.DELTA.ECHO.foxtrot.india.",
+		"alpha.hotel.charlie.DELTA.ECHO.foxtrot.india.",
+		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.",
+	} {
+		lines := strings.Split(expected, ".")
+		c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
+		c1.Deps = append(c1.Deps, allDeps...)
+		allDeps = append(allDeps, c1.Hash())
+
+		for i, e := range c1.EdgeRefs {
+			fmt.Printf("Edge %d/%d\n", i, len(c1.EdgeRefs))
+			fmt.Printf("  Src: %v\n", e.Src)
+			fmt.Printf("  Con: %v\n", e.Content)
+			fmt.Printf("  Dst: %v\n", e.Dst)
+		}
+
+		fmt.Printf("Applying commit: %v\n", c1)
+		if err := graph.Apply(r, c1); err != nil {
+			panic(fmt.Sprintf("failed to apply commit: %v", err))
+		}
+		fmt.Printf("Done applying commit: %v\n", c1)
+		data, err = graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+		if err != nil {
+			panic(err)
+		}
+		expected := strings.Join(lines, ".")
+		if str := string(bytes.Join(data, []byte("."))); str != expected {
+			panic(fmt.Sprintf("%q vs %q", str, expected))
+		}
+	}
+
+	return
+	lines := []string{"alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""}
+	c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
 	c1.Deps = append(c1.Deps, c0.Hash())
 
 	for i, e := range c1.EdgeRefs {
@@ -53,12 +93,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india." {
-		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india."))
+	expected := strings.Join(lines, ".")
+	if str := string(bytes.Join(data, []byte("."))); str != expected {
+		panic(fmt.Sprintf("%q vs %q", str, expected))
 	}
+	fmt.Printf("*********************************************************************************************************\n")
 
+	// NEXT: some edges aren't going to quite the right place after a move (maybe the move is irrelevant though).
 	fmt.Printf("WORKING ON C2\n")
-	c2 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent("alpha", "bravo", "ECHO", "foxtrot", "golf", "hotel", "india", ""))
+	lines = []string{"alpha", "bravo", "golf", "hotel", "charlie", "DELTA", "ECHO", "foxtrot", "india", ""}
+	c2 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
 	c2.Deps = []string{c0.Hash(), c1.Hash()}
 	for i, e := range c2.EdgeRefs {
 		fmt.Printf("Edge %d/%d\n", i, len(c2.EdgeRefs))
@@ -78,8 +122,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.ECHO.foxtrot.golf.hotel.india." {
-		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.ECHO.foxtrot.golf.hotel.india."))
+	expected = strings.Join(lines, ".")
+	if str := string(bytes.Join(data, []byte("."))); str != expected {
+		panic(fmt.Sprintf("%q vs %q", str, expected))
 	}
 }
 
@@ -91,7 +136,10 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	}
 
 	fmt.Printf("lines0: %s\n", lines0)
-	fmt.Printf("Ranges: %v\n", ranges)
+	for i := range ranges {
+		d, _ := json.MarshalIndent(ranges[i], "", "  ")
+		fmt.Printf("%d: %s\n", i, d)
+	}
 
 	var vs [][]uint64
 	m := make(map[string]uint64)
@@ -112,6 +160,15 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	sort.Slice(css, func(i, j int) bool {
 		return css[i].Bi < css[j].Bi
 	})
+	fmt.Printf("Common substrings:\n")
+	for _, cs := range css {
+		a := string(bytes.Join(lines0[cs.Ai:cs.Ai+cs.Length], []byte{'.'}))
+		b := string(bytes.Join(lines1[cs.Bi:cs.Bi+cs.Length], []byte{'.'}))
+		fmt.Printf("%s vs %s\n", a, b)
+		if a != b {
+			panic("balls")
+		}
+	}
 	total := 0
 
 	var c graph.Commit
@@ -137,7 +194,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 
 		// The next one or more lines are copied from the source file.
 
-		// This searches for the ReadRange that spans Bi, the start of the text copied from the
+		// This searches for the ReadRange that spans Ai, the start of the text copied from the
 		// source file.
 		n := sort.Search(len(ranges), func(index int) bool {
 			return ranges[index].ReadDepth+ranges[index].Length >= cs.Ai
@@ -150,34 +207,47 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// the current edge, and potentially the src node of the next edge if we don't have to move
 		// to the next ReadRange.
 		unused := cs.Ai - ranges[n].ReadDepth
+		fmt.Printf("Ai vs ReadDepth: %d vs %d\n", cs.Ai, ranges[n].ReadDepth)
 
-		curEdge.Dst = graph.NodeRef{Node: ranges[n].Node, Depth: unused}
+		curEdge.Dst = graph.NodeRef{Node: ranges[n].Node, Depth: unused + ranges[n].Depth}
+		fmt.Printf("Using src: %v\n", curEdge.Src)
 		fmt.Printf("Setting Dst: %v\n", curEdge.Dst)
 		fmt.Printf("Using range: %v\n", ranges[n])
 		fmt.Printf("Inserting edge %d\n", len(c.EdgeRefs))
 		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
 		curEdge = &graph.EdgeRef{}
 
+		fmt.Printf("--- Checking the next common substring: %q\n", lines1[cs.Bi:cs.Bi+cs.Length])
 		i := cs.Bi
+		covered := 0 // Number of nodes covered so far in the iterations of the following loop.
 		for i < cs.Bi+cs.Length {
-			used := cs.Length
-			if used > ranges[n].Length {
-				used = ranges[n].Length
+			// depth := ranges[n].Depth - unused
+			used := cs.Length - covered
+			if used > ranges[n].Length-unused {
+				used = ranges[n].Length - unused
 			}
 			{
-				// This miiiight be right, but we need to test when the common substrings go over multiple
-				// nodes, that might screw this up.
-				fmt.Printf("From range: %s\n", ranges[n].Node)
-				fmt.Printf("  Depth: %d\n", ranges[n].Depth)
-				fmt.Printf("  used, unused: %d %d\n", used, unused)
+				theseLines := r.GetContent(r.GetNode(ranges[n].Node).Content)[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
+				fmt.Printf("Node %s @ %d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, string(bytes.Join(theseLines, []byte{'.'})))
+				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
+				fmt.Printf("%s\n", d)
 				curEdge.Src = graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + unused + used}
-				fmt.Printf("  set src to %v\n", curEdge.Src)
+				fmt.Printf("  set src to %v, %d = %d + %d + %d\n", curEdge.Src, curEdge.Src.Depth, ranges[n].Depth, unused, used)
 			}
-			i += ranges[n].Length
+			covered += used
+			i += ranges[n].Length - unused
 			n++
+			fmt.Printf("   i: %d\n", i)
+			fmt.Printf("   cs.Bi: %d\n", cs.Bi)
+			fmt.Printf("   cs.Length: %d\n", cs.Length)
 			unused = 0
 		}
+		// if n < len(ranges) {
+		// 	theseLines := r.GetContent(r.GetNode(ranges[n].Node).Content)[ranges[n].Depth : ranges[n].Depth+ranges[n].Length]
+		// 	fmt.Printf("Ended at %s: %s\n", ranges[n].Node, theseLines)
+		// }
 		total = cs.Bi + cs.Length
+		fmt.Printf("Ended loop with %d >= %d+%d\n", i, cs.Bi, cs.Length)
 	}
 	curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
 	c.EdgeRefs = append(c.EdgeRefs, *curEdge)
