@@ -39,15 +39,20 @@ func main() {
 	fmt.Printf("*********************************************************************************************************\n")
 
 	allDeps := []string{c0.Hash()}
+	prevLines, err := graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+	if err != nil {
+		panic(err)
+	}
+	prev := strings.Split(contentToString(prevLines), ",")
 	for _, expected := range []string{
 		"alpha.bravo.charlie.delta.echo.foxtrot.golf.HOTEL.INDIA",
-		"hotel.india.alpha.bravo.charlie.delta.echo.foxtrot.GOLF.",
-		"alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india.",
-		"alpha.bravo.golf.hotel.charlie.DELTA.ECHO.foxtrot.india.",
-		"alpha.hotel.charlie.DELTA.ECHO.foxtrot.india.",
-		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.",
-		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.BEANS.buttons.machines.",
-		"hotel.charlie.DELTA.BEANS.buttons.foxtrot.india.machines.alpha.ECHO.",
+		"hotel.india.alpha.bravo.charlie.delta.echo.foxtrot.GOLF",
+		"alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india",
+		"alpha.bravo.golf.hotel.charlie.DELTA.ECHO.foxtrot.india",
+		"alpha.hotel.charlie.DELTA.ECHO.foxtrot.india",
+		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA",
+		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.BEANS.buttons.machines",
+		"hotel.charlie.DELTA.BEANS.buttons.foxtrot.india.machines.alpha.ECHO",
 	} {
 		fmt.Printf("*********************************************************************************************************\n")
 		fmt.Printf("\n     %s\n\n", expected)
@@ -55,6 +60,24 @@ func main() {
 		c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
 		c1.Deps = append(c1.Deps, allDeps...)
 		allDeps = append(allDeps, c1.Hash())
+
+		if prev[0] == lines[0] {
+			// Verify that we didn't get an edge from the src node when we didn't need one.
+			for _, e := range c1.EdgeRefs {
+				if e.Src.Node == "src:sample.txt" {
+					panic("got an extraneous edge from a src node")
+				}
+			}
+		}
+		if prev[len(prev)-1] == lines[len(lines)-1] {
+			// Verify that we didn't get an edge from the src node when we didn't need one.
+			for _, e := range c1.EdgeRefs {
+				if e.Dst.Node == "snk:sample.txt" {
+					panic("got an extraneous edge to a snk node")
+				}
+			}
+		}
+		prev = lines
 
 		for i, e := range c1.EdgeRefs {
 			fmt.Printf("Edge %d/%d\n", i, len(c1.EdgeRefs))
@@ -164,8 +187,13 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		fmt.Printf("Using src: %v\n", curEdge.Src)
 		fmt.Printf("Setting Dst: %v\n", curEdge.Dst)
 		fmt.Printf("Using range: %v\n", ranges[n])
-		fmt.Printf("Inserting edge %d\n", len(c.EdgeRefs))
-		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+		// Check that we aren't duplicating an existing edge from a src node.
+		if strings.HasPrefix(curEdge.Src.Node, "src:") && css[0].Ai == 0 && css[0].Bi == 0 {
+			fmt.Printf("skipping src:* edge because it already exists\n")
+		} else {
+			fmt.Printf("Inserting edge %d\n", len(c.EdgeRefs))
+			c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+		}
 		curEdge = &graph.EdgeRef{}
 
 		fmt.Printf("--- Checking the next common substring: %q\n", lines1[cs.Bi:cs.Bi+cs.Length])
@@ -204,8 +232,12 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		fmt.Printf("New Content: %s\n", contentToString(lines1[total:]))
 		curEdge.Content = &graph.NewContent{Form: graph.FormText, Content: lines1[total:]}
 	}
-	curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
-	c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+	if cs := css[len(css)-1]; cs.Ai+cs.Length == len(lines0) && cs.Bi+cs.Length == len(lines1) {
+		fmt.Printf("skipping snk:* edge because it already exists\n")
+	} else {
+		curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
+		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+	}
 
 	return &c
 }
