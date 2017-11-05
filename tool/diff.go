@@ -40,11 +40,17 @@ func main() {
 
 	allDeps := []string{c0.Hash()}
 	for _, expected := range []string{
+		"alpha.bravo.charlie.delta.echo.foxtrot.golf.HOTEL.INDIA",
+		"hotel.india.alpha.bravo.charlie.delta.echo.foxtrot.GOLF.",
 		"alpha.bravo.charlie.DELTA.ECHO.foxtrot.golf.hotel.india.",
 		"alpha.bravo.golf.hotel.charlie.DELTA.ECHO.foxtrot.india.",
 		"alpha.hotel.charlie.DELTA.ECHO.foxtrot.india.",
 		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.",
+		"alpha.ECHO.foxtrot.india.hotel.charlie.DELTA.BEANS.buttons.machines.",
+		"hotel.charlie.DELTA.BEANS.buttons.foxtrot.india.machines.alpha.ECHO.",
 	} {
+		fmt.Printf("*********************************************************************************************************\n")
+		fmt.Printf("\n     %s\n\n", expected)
 		lines := strings.Split(expected, ".")
 		c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
 		c1.Deps = append(c1.Deps, allDeps...)
@@ -70,61 +76,6 @@ func main() {
 		if str := string(bytes.Join(data, []byte("."))); str != expected {
 			panic(fmt.Sprintf("%q vs %q", str, expected))
 		}
-	}
-
-	return
-	lines := []string{"alpha", "bravo", "charlie", "DELTA", "ECHO", "foxtrot", "golf", "hotel", "india", ""}
-	c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
-	c1.Deps = append(c1.Deps, c0.Hash())
-
-	for i, e := range c1.EdgeRefs {
-		fmt.Printf("Edge %d/%d\n", i, len(c1.EdgeRefs))
-		fmt.Printf("  Src: %v\n", e.Src)
-		fmt.Printf("  Con: %v\n", e.Content)
-		fmt.Printf("  Dst: %v\n", e.Dst)
-	}
-
-	fmt.Printf("Applying commit: %v\n", c1)
-	if err := graph.Apply(r, c1); err != nil {
-		panic(fmt.Sprintf("failed to apply commit: %v", err))
-	}
-	fmt.Printf("Done applying commit: %v\n", c1)
-	data, err = graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
-	if err != nil {
-		panic(err)
-	}
-	expected := strings.Join(lines, ".")
-	if str := string(bytes.Join(data, []byte("."))); str != expected {
-		panic(fmt.Sprintf("%q vs %q", str, expected))
-	}
-	fmt.Printf("*********************************************************************************************************\n")
-
-	// NEXT: some edges aren't going to quite the right place after a move (maybe the move is irrelevant though).
-	fmt.Printf("WORKING ON C2\n")
-	lines = []string{"alpha", "bravo", "golf", "hotel", "charlie", "DELTA", "ECHO", "foxtrot", "india", ""}
-	c2 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
-	c2.Deps = []string{c0.Hash(), c1.Hash()}
-	for i, e := range c2.EdgeRefs {
-		fmt.Printf("Edge %d/%d\n", i, len(c2.EdgeRefs))
-		fmt.Printf("  Src: %v\n", e.Src)
-		if e.Content == nil {
-			fmt.Printf("  Con: <nil>\n")
-		} else {
-			fmt.Printf("  Con: %v\n", contentToString(e.Content.Content))
-		}
-		fmt.Printf("  Dst: %v\n", e.Dst)
-	}
-	if err := graph.Apply(r, c2); err != nil {
-		panic(fmt.Sprintf("failed to apply commit: %v", err))
-	}
-
-	data, err = graph.ReadVersion(r, allFrontier{}, "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
-	if err != nil {
-		panic(err)
-	}
-	expected = strings.Join(lines, ".")
-	if str := string(bytes.Join(data, []byte("."))); str != expected {
-		panic(fmt.Sprintf("%q vs %q", str, expected))
 	}
 }
 
@@ -197,7 +148,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// This searches for the ReadRange that spans Ai, the start of the text copied from the
 		// source file.
 		n := sort.Search(len(ranges), func(index int) bool {
-			return ranges[index].ReadDepth+ranges[index].Length >= cs.Ai
+			return ranges[index].ReadDepth+ranges[index].Length > cs.Ai
 		})
 		fmt.Printf("Dst node: %s\n", ranges[n].Node)
 		fmt.Printf("Dst Depth: %d\n", ranges[n].Depth)
@@ -228,7 +179,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 			}
 			{
 				theseLines := r.GetContent(r.GetNode(ranges[n].Node).Content)[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
-				fmt.Printf("Node %s @ %d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, string(bytes.Join(theseLines, []byte{'.'})))
+				fmt.Printf("Node %s @ %d:%d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, ranges[n].Depth+unused+used, string(bytes.Join(theseLines, []byte{'.'})))
 				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
 				fmt.Printf("%s\n", d)
 				curEdge.Src = graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + unused + used}
@@ -248,6 +199,10 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// }
 		total = cs.Bi + cs.Length
 		fmt.Printf("Ended loop with %d >= %d+%d\n", i, cs.Bi, cs.Length)
+	}
+	if total < len(lines1) {
+		fmt.Printf("New Content: %s\n", contentToString(lines1[total:]))
+		curEdge.Content = &graph.NewContent{Form: graph.FormText, Content: lines1[total:]}
 	}
 	curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
 	c.EdgeRefs = append(c.EdgeRefs, *curEdge)
