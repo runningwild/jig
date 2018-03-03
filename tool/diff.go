@@ -239,6 +239,58 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
 	}
 
+	depSet := make(map[string]struct{})
+	for _, e := range c.EdgeRefs {
+		fmt.Printf("Dependency on %s -> %s\n", e.Src.Node, e.Dst.Node)
+		if !strings.HasPrefix(e.Src.Node, "src:") {
+			depSet[r.GetNode(e.Src.Node).In[0].Commit] = struct{}{}
+		}
+		if !strings.HasPrefix(e.Dst.Node, "snk:") {
+			depSet[r.GetNode(e.Dst.Node).In[0].Commit] = struct{}{}
+		}
+	}
+	for dep := range depSet {
+		c.Deps = append(c.Deps, dep)
+	}
+	sort.Strings(c.Deps)
+
+	// Calculate the dependencies for this commit
+	if false { // I think this was all unnecessary
+		forward := make(map[string]string)
+		backward := make(map[string]string)
+		fmt.Printf("Commit data:\n")
+		for _, e := range c.EdgeRefs {
+			fmt.Printf("  Edge %s@%d -> %s@%d\n", e.Src.Node, e.Src.Depth, e.Dst.Node, e.Dst.Depth)
+			forward[e.Src.Node] = e.Dst.Node
+			backward[e.Dst.Node] = e.Src.Node
+		}
+		// deps := make(map[string]bool)
+		cur := fmt.Sprintf("src:%s", path)
+		snk := fmt.Sprintf("snk:%s", path)
+		used := make(map[string]bool)
+		for cur != snk {
+			fmt.Printf("on %q\n", cur)
+			if used[cur] {
+				panic("balls")
+			}
+			used[cur] = true
+			if dst, ok := forward[cur]; ok {
+				cur = dst
+				continue
+			}
+			n := r.GetNode(cur)
+			for i := len(n.Out) - 1; i >= 0; i-- {
+				e := n.Out[i]
+				if !f.Observes(e.Commit) {
+					continue
+				}
+				n = r.GetNode(e.Node)
+				break
+			}
+			cur = n.Head
+		}
+	}
+
 	return &c
 }
 
