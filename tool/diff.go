@@ -14,6 +14,7 @@ import (
 
 func main() {
 	r := testutils.MakeFakeRepo()
+	var commits []*graph.Commit
 	c0 := &graph.Commit{
 		Deps: nil,
 		EdgeRefs: []graph.EdgeRef{
@@ -24,6 +25,7 @@ func main() {
 			},
 		},
 	}
+	commits = append(commits, c0)
 	fmt.Printf("Appling initial commit\n")
 	if err := graph.Apply(r, c0); err != nil {
 		panic(err)
@@ -58,7 +60,8 @@ func main() {
 		fmt.Printf("\n     %s\n\n", expected)
 		lines := strings.Split(expected, ".")
 		c1 := diffmachine(r, allFrontier{}, "sample.txt", stringsToContent(lines...))
-		c1.Deps = append(c1.Deps, allDeps...)
+		commits = append(commits, c1)
+		// c1.Deps = append(c1.Deps, allDeps...)
 		allDeps = append(allDeps, c1.Hash())
 
 		if prev[0] == lines[0] {
@@ -99,6 +102,10 @@ func main() {
 		if str := string(bytes.Join(data, []byte("."))); str != expected {
 			panic(fmt.Sprintf("%q vs %q", str, expected))
 		}
+	}
+	fmt.Printf("All Commits:\n")
+	for _, c := range commits {
+		fmt.Printf("%s: %v\n", c.Hash(), c.Deps)
 	}
 }
 
@@ -239,57 +246,39 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
 	}
 
-	depSet := make(map[string]struct{})
+	depSet := make(map[string]bool)
 	for _, e := range c.EdgeRefs {
-		fmt.Printf("Dependency on %s -> %s\n", e.Src.Node, e.Dst.Node)
-		if !strings.HasPrefix(e.Src.Node, "src:") {
-			depSet[r.GetNode(e.Src.Node).In[0].Commit] = struct{}{}
+		if e.Src.Node == e.Dst.Node {
+			depSet[r.GetNode(e.Src.Node).In[0].Commit] = true
+			fmt.Printf("Added %q to deps\n", r.GetNode(e.Src.Node).In[0].Commit)
+			continue
 		}
-		if !strings.HasPrefix(e.Dst.Node, "snk:") {
-			depSet[r.GetNode(e.Dst.Node).In[0].Commit] = struct{}{}
+		fmt.Printf("edge ref: %s -> %s\n", e.Src.Node, e.Dst.Node)
+
+		// If we are making a reverse edge we need to read the edges in reverse.  This will detect
+		// that and swap src and dst if necessary.
+		src, dst := e.Src.Node, e.Dst.Node
+		if !strings.HasPrefix(e.Src.Node, "src:") && !strings.HasPrefix(e.Dst.Node, "snk:") {
+			for _, r := range ranges {
+				if r.Node == e.Src.Node {
+					fmt.Printf("found src first\n")
+					break
+				}
+				if r.Node == e.Dst.Node {
+					fmt.Printf("found dst first\n")
+					src, dst = dst, src
+					break
+				}
+			}
+		}
+		if _, err := graph.ReadVersion(r, f, src, dst, &graph.ReadMetadata{Commits: depSet}); err != nil {
+			panic(err)
 		}
 	}
 	for dep := range depSet {
 		c.Deps = append(c.Deps, dep)
 	}
 	sort.Strings(c.Deps)
-
-	// Calculate the dependencies for this commit
-	if false { // I think this was all unnecessary
-		forward := make(map[string]string)
-		backward := make(map[string]string)
-		fmt.Printf("Commit data:\n")
-		for _, e := range c.EdgeRefs {
-			fmt.Printf("  Edge %s@%d -> %s@%d\n", e.Src.Node, e.Src.Depth, e.Dst.Node, e.Dst.Depth)
-			forward[e.Src.Node] = e.Dst.Node
-			backward[e.Dst.Node] = e.Src.Node
-		}
-		// deps := make(map[string]bool)
-		cur := fmt.Sprintf("src:%s", path)
-		snk := fmt.Sprintf("snk:%s", path)
-		used := make(map[string]bool)
-		for cur != snk {
-			fmt.Printf("on %q\n", cur)
-			if used[cur] {
-				panic("balls")
-			}
-			used[cur] = true
-			if dst, ok := forward[cur]; ok {
-				cur = dst
-				continue
-			}
-			n := r.GetNode(cur)
-			for i := len(n.Out) - 1; i >= 0; i-- {
-				e := n.Out[i]
-				if !f.Observes(e.Commit) {
-					continue
-				}
-				n = r.GetNode(e.Node)
-				break
-			}
-			cur = n.Head
-		}
-	}
 
 	return &c
 }

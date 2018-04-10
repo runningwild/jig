@@ -850,8 +850,6 @@ func TestProgrammaticCommits(t *testing.T) {
 	// 	So(string(bytes.Join(data, []byte("."))), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
 	// 	diffmachine(r, allFrontier{}, "sample.txt", [][]byte{[]byte("alpha"), []byte("bravo"), []byte("foxtrot"), []byte("golf"), []byte("hotel"), []byte("indeia"), []byte("")})
 	// 	// Let's remove 'delta'.  This will require two splits and a new edge.
-	// 	// NEXT: we need a function that takes a list of depths and returns the appropriate node/depth pair to use as a node-ref.
-	// 	//       this shouldn't depend on which commits are involved, but when we make the edges we'll need to determine those.
 	// 	// head0, _, err := graph.SplitNode(r, "src:sample.txt", 3)
 	// 	// So(err, ShouldBeNil)
 	// 	// _, tail1, err := graph.SplitNode(r, "snk:sample.txt", 3)

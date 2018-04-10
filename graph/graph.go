@@ -215,6 +215,13 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 
 	used := make(map[string]struct{})
 	readDepth := 0
+
+	if metadata.Commits != nil && len(n.In) > 0 {
+		// If a node has input edges then the first one is the one that created it, and that
+		// represents a commit that this path depends on.
+		metadata.Commits[n.In[0].Commit] = true
+	}
+
 	for {
 		fmt.Printf("On node %q: %s\n", n.Head, nodeContent(r, n.Head))
 		for i := len(n.Out) - 1; i >= 0; i-- {
@@ -223,18 +230,19 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 				continue
 			}
 			if metadata.Commits != nil {
-				metadata.Commits[n.Out[0].Commit] = true
+				metadata.Commits[e.Commit] = true
 			}
 			n = r.GetNode(e.Node)
 			if n == nil {
 				return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
 			}
+			fmt.Printf("  moved to node %q: %s\n", n.Head, nodeContent(r, n.Head))
 			break
 		}
 
 		// Prevents traversing cycles more than once.
 		if _, ok := used[n.Head]; ok {
-			return nil, fmt.Errorf("file graph contains a cycle")
+			return nil, fmt.Errorf("file graph contains a cycle %v", n.Head)
 		}
 		used[n.Head] = struct{}{}
 
@@ -243,6 +251,9 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		}
 		if n.Head == end {
 			break
+		}
+		if strings.HasPrefix(n.Head, "snk:") {
+			return nil, fmt.Errorf("reached end of file without reaching the dst node")
 		}
 		// fmt.Printf("%s\n", nodeContent(r, n.Head))
 		content := r.GetContent(n.Content)
