@@ -246,6 +246,10 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
 	}
 
+	// NEXT: need this to work with conflicts.  There are two major issues that need to be addressed:
+	// 1. LCS doesn't work with conflicted files, so we'll need a different or maybe hybrid approach.
+	// 2. ReadVersion assumes the file is not in conflict, and we'll need to include both versions in
+	//    the commit's deps to ensure that it actually resolves the conflict.
 	depSet := make(map[string]bool)
 	for _, e := range c.EdgeRefs {
 		if e.Src.Node == e.Dst.Node {

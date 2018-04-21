@@ -386,41 +386,6 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 	}
 }
 
-// TOOD: get rid of this if it ends up being unused.
-func ToposortSubgraph(g map[string][]string) []string {
-	heads := make(map[string]bool)
-	for c := range g {
-		heads[c] = false
-	}
-	for c := range g {
-		for _, d := range g[c] {
-			delete(heads, d)
-		}
-	}
-	// Heads should now contain only those commits that are undominated.
-	var res []string
-	used := make(map[string]bool)
-	for h := range heads {
-		topohelper(g, h, used, &res)
-	}
-	for i := 0; i < len(res)/2; i++ {
-		swap := len(res) - 1 - i
-		res[i], res[swap] = res[swap], res[i]
-	}
-	return res
-}
-
-func topohelper(g map[string][]string, cur string, used map[string]bool, res *[]string) {
-	if used[cur] {
-		return
-	}
-	for _, c := range g[cur] {
-		topohelper(g, c, used, res)
-	}
-	used[cur] = true
-	*res = append(*res, cur)
-}
-
 type simpleGraph struct {
 	edges map[string]map[string]bool
 	nodes map[string]bool
