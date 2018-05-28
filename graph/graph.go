@@ -39,6 +39,7 @@ type Repo interface {
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
+	fmt.Printf("Splitting %s at depth %d\n", node, depth)
 	if depth <= 0 {
 		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
