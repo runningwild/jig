@@ -6,10 +6,10 @@ import (
 	"sort"
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-
 	"github.com/runningwild/jig/graph"
 	"github.com/runningwild/jig/testutils"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func stringsToContent(ss ...string) [][]byte {
@@ -481,25 +481,6 @@ func TestCommits(t *testing.T) {
 func TestVerge(t *testing.T) {
 	Convey("applied commits", t, func() {
 		r := testutils.MakeFakeRepo()
-		// 		c0 := &graph.Commit{
-		// 			Deps: nil,
-		// 			EdgeRefs: []graph.EdgeRef{
-		// 				{
-		// 					Src: graph.NodeRef{
-		// 						Node:  "src:foo.txt",
-		// 						Depth: 1,
-		// 					},
-		// 					Content: &graph.NewContent{
-		// 						Form:    graph.FormText,
-		// 						Content: stringsToContent("alpha", "bravo", "charlie", "delta"),
-		// 					},
-		// 					Dst: graph.NodeRef{
-		// 						Node: "snk:foo.txt",
-		// 					},
-		// 				},
-		// 			},
-		// 		}
-
 		c0 := &graph.Commit{
 			Deps: nil,
 			EdgeRefs: []graph.EdgeRef{
@@ -890,6 +871,282 @@ func TestVerge(t *testing.T) {
 			So(unhit, ShouldBeEmpty)
 		})
 	})
+}
+
+func TestReadVersions(t *testing.T) {
+	Convey("ReadVersions", t, func() {
+		r := testutils.MakeFakeRepo()
+		c0 := &graph.Commit{
+			Deps: nil,
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 1,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"),
+					},
+					Dst: graph.NodeRef{
+						Node: "snk:foo.txt",
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c0), ShouldBeNil)
+		var ranges []graph.ReadRange
+		data, err := graph.ReadVersion(r, allFrontier{}, "src:foo.txt", "snk:foo.txt", &graph.ReadMetadata{Ranges: &ranges})
+		So(err, ShouldBeNil)
+		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.juliet")
+		So(ranges, ShouldHaveLength, 1)
+		head := ranges[0].Node
+
+		// capitalize bravo through delta
+		c1 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 1,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
+					},
+					Dst: graph.NodeRef{
+						Node:  head,
+						Depth: 4,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c1), ShouldBeNil)
+
+		// capitalize charlie through echo
+		c2 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 2,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("CHARLIE", "DELTA", "ECHO"),
+					},
+					Dst: graph.NodeRef{
+						Node:  head,
+						Depth: 5,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c2), ShouldBeNil)
+		{
+			var nodes []string
+			for n := range r.Nodes {
+				nodes = append(nodes, n)
+			}
+			sort.Strings(nodes)
+			for _, node := range nodes {
+				fmt.Printf("Node %q: %s\n", node, nodeContent(r, node))
+				fmt.Printf("%v\n\n", r.GetNode(node))
+			}
+		}
+
+		// capitalize juliet
+		c3 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 9,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("JULIET"),
+					},
+					Dst: graph.NodeRef{
+						Node: "snk:foo.txt",
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c3), ShouldBeNil)
+
+		// capitalize india and delete juliet
+		c4 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 8,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("INDIA"),
+					},
+					Dst: graph.NodeRef{
+						Node: "snk:foo.txt",
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c4), ShouldBeNil)
+
+		// The repo should be able to have multiple conflicts, but if the frontier doesn't include
+		// them then we shouldn't see them.
+		{
+			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
+			conflicts := findConflicts(v)
+			So(conflicts, ShouldHaveLength, 1)
+			So(conflicts[0].commits, ShouldHaveLength, 2)
+			So(conflicts[0].commits, ShouldContainKey, c1.Hash())
+			So(conflicts[0].commits, ShouldContainKey, c2.Hash())
+			So(snippet{r, explicitFrontier(c0, c1), conflicts[0].start, conflicts[0].end}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot")
+			So(snippet{r, explicitFrontier(c0, c2), conflicts[0].start, conflicts[0].end}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot")
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].start, conflicts[0].end, conflicts[0].commits, []byte{'.'})
+			So(err, ShouldBeNil)
+			So(versions, ShouldHaveLength, 2)
+		}
+		{
+			v := graph.MakeVerge(r, explicitFrontier(c0, c3, c4), "foo.txt")
+			conflicts := findConflicts(v)
+			So(conflicts, ShouldHaveLength, 1)
+			So(conflicts[0].commits, ShouldHaveLength, 2)
+			So(conflicts[0].commits, ShouldContainKey, c3.Hash())
+			So(conflicts[0].commits, ShouldContainKey, c4.Hash())
+			So(snippet{r, explicitFrontier(c0, c3), conflicts[0].start, conflicts[0].end}, shouldRead, "hotel.india.JULIET")
+			So(snippet{r, explicitFrontier(c0, c4), conflicts[0].start, conflicts[0].end}, shouldRead, "hotel.INDIA")
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].start, conflicts[0].end, conflicts[0].commits, []byte{'.'})
+			So(err, ShouldBeNil)
+			So(versions, ShouldHaveLength, 2)
+		}
+
+		// Now let's try different ways of resolving c1 and c2.
+
+		// Resolve by taking CHARLIE.DELTA from c1.
+		metadata := &graph.ReadMetadata{Ranges: new([]graph.ReadRange)}
+		_, err = graph.ReadVersion(r, explicitFrontier(c0, c1), "src:foo.txt", "snk:foo.txt", metadata)
+		So(err, ShouldBeNil)
+		var n1 string
+		for _, r := range *metadata.Ranges {
+			if r.Commit == c1.Hash() {
+				n1 = r.Node
+			}
+		}
+		So(n1, ShouldNotEqual, "")
+		cR12a := &graph.Commit{
+			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 2,
+					},
+					Dst: graph.NodeRef{
+						Node:  n1,
+						Depth: 5,
+					},
+				},
+				{
+					Src: graph.NodeRef{
+						Node:  n1,
+						Depth: 3,
+					},
+					Dst: graph.NodeRef{
+						Node:  head,
+						Depth: 4,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, cR12a), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c1, c2, cR12a), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.CHARLIE.DELTA.echo.foxtrot.golf.hotel.india.juliet")
+	})
+}
+
+type snippet struct {
+	r     graph.Repo
+	f     graph.Frontier
+	start string
+	end   string
+}
+
+func shouldRead(_a interface{}, _bs ...interface{}) string {
+	s, ok := _a.(snippet)
+	if !ok {
+		return fmt.Sprintf("shouldRead got first parameter %T, wanted snippet", _a)
+	}
+	if len(_bs) != 1 {
+		return fmt.Sprintf("shouldRead got %d parameters, wanted 2", len(_bs))
+	}
+	wantMsg, ok := _bs[0].(string)
+	if !ok {
+		return fmt.Sprintf("shouldRead got second parameter %T, wanted string", _bs[0])
+	}
+	lines, err := graph.ReadVersion(s.r, s.f, s.start, s.end, &graph.ReadMetadata{})
+	if err != nil {
+		return fmt.Sprintf("error on ReadVersion: %v", err)
+	}
+	gotMsg := string(bytes.Join(lines, []byte{'.'}))
+	if wantMsg != gotMsg {
+		return fmt.Sprintf("Expected: '%s'\nActual:   '%s'\n", wantMsg, gotMsg)
+	}
+	return ""
+}
+
+// We have to advance until we find a conflict, then advance until converged, then retract until we
+// find a conflict, then retract until converged.  *UntilConverged may or may not return with the
+// verge in conflict because it's not always obvious at the start or end of a conflict.
+var bean = 0
+
+func findConflicts(v *graph.Verge) []conflict {
+	fmt.Printf("Conflicts: %v\n", v.Conflicts())
+	fmt.Printf("Advancing from %v to conflict\n", v)
+	if !v.AdvanceUntilConflicted() {
+		return nil
+	}
+	fmt.Printf("Conflicts: %v\n", v.Conflicts())
+	fmt.Printf("Advancing from %v to convergance\n", v)
+	end, commits := v.AdvanceUntilConverged()
+	v2 := v.Clone()
+	fmt.Printf("Conflicts: %v\n", v.Conflicts())
+	fmt.Printf("Retracting from %v to conflict\n", v)
+	if !v2.RetractUntilConflicted() {
+		panic("what the balls")
+		return nil
+	}
+	fmt.Printf("Conflicts: %v\n", v.Conflicts())
+	fmt.Printf("Retracting from %v to convergance\n", v)
+	start, commits2 := v2.RetractUntilConverged()
+	for k, v := range commits {
+		if commits2[k] != v {
+			panic("commits don't match")
+		}
+	}
+	for k, v := range commits2 {
+		if commits[k] != v {
+			panic("commits don't match")
+		}
+	}
+	bean++
+	if bean > 2 {
+		panic("e")
+	}
+	v.Advance(end)
+	return append([]conflict{conflict{start, end, commits}}, findConflicts(v)...)
+}
+
+type conflict struct {
+	start   string
+	end     string
+	commits map[string]bool
 }
 
 type allFrontier struct{}

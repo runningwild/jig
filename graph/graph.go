@@ -39,7 +39,6 @@ type Repo interface {
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
-	fmt.Printf("Splitting %s @ %d\n", node, depth)
 	if depth <= 0 {
 		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
@@ -99,7 +98,6 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 
 	contentA := r.PutContent(content[0:depth])
 	contentB := r.PutContent(content[depth:])
-
 	a := &Node{
 		Head:    head0,
 		Tail:    tail0,
@@ -108,7 +106,6 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		Count:   depth,
 		In:      n.In,
 		Out:     []Edge{{Commit: commitHash, Node: head1}},
-		OutDeps: nil,
 	}
 	b := &Node{
 		Head:    head1,
@@ -118,7 +115,6 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		Count:   n.Count - depth,
 		In:      []Edge{{Commit: commitHash, Node: tail0}},
 		Out:     n.Out,
-		OutDeps: n.OutDeps,
 	}
 
 	r.PutNode(a) // This overwrite the previous node
@@ -196,6 +192,13 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 	var buf [][]byte
 	n := r.GetNode(start)
 	if n == nil {
+		startHead := r.GetRef(start)
+		if startHead == "" {
+			return nil, fmt.Errorf("failed to find start node %s", start)
+		}
+		n = r.GetNode(startHead)
+	}
+	if n == nil {
 		return nil, fmt.Errorf("failed to find start node %s", start)
 	}
 	if len(n.In) == 0 && len(n.Out) == 0 {
@@ -205,8 +208,6 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		return nil, fmt.Errorf("start and end were the same node")
 	}
 	prev := n
-	// fmt.Printf("End is %s\n", nodeContent(r, end))
-	fmt.Printf("Pathing from %s to %s\n", start, end)
 
 	// Only take the last chunk from the starting node.
 	if content := r.GetContent(n.Content); len(content) > 0 {
@@ -223,7 +224,6 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 	}
 
 	for {
-		fmt.Printf("On node %q: %s\n", n.Head, nodeContent(r, n.Head))
 		for i := len(n.Out) - 1; i >= 0; i-- {
 			e := n.Out[i]
 			if !f.Observes(e.Commit) {
@@ -236,7 +236,6 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 			if n == nil {
 				return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
 			}
-			fmt.Printf("  moved to node %q: %s\n", n.Head, nodeContent(r, n.Head))
 			break
 		}
 
@@ -255,13 +254,10 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		if strings.HasPrefix(n.Head, "snk:") {
 			return nil, fmt.Errorf("reached end of file without reaching the dst node")
 		}
-		// fmt.Printf("%s\n", nodeContent(r, n.Head))
 		content := r.GetContent(n.Content)
 		buf = append(buf, content...)
 		if metadata.Ranges != nil {
 			ref, depth := nodeRef(r, n)
-			// fmt.Printf("Node Reffing %v\n", n)
-			// fmt.Printf("nodeRef(%s) -> %s %d\n", n.Head, ref, depth)
 			*metadata.Ranges = append(*metadata.Ranges, ReadRange{Commit: nodeCommit(n), Node: ref, Depth: depth, ReadDepth: readDepth, Length: len(content)})
 			readDepth += len(content)
 		}
@@ -287,9 +283,7 @@ func nodeCommit(n *Node) string {
 }
 
 func nodeRef(r Repo, n *Node) (string, int) {
-	// fmt.Printf("Getting ref for %s: %s\n", n.Head, nodeContent(r, n.Head))
 	prev := r.GetNode(r.GetRef(n.In[0].Node))
-	// fmt.Printf("prev: %s\n", n.In[0].Node)
 	if nodeCommit(prev) != nodeCommit(n) || prev.Form == FormFileSrc {
 		return n.Head, 0
 	}
@@ -370,18 +364,19 @@ func Apply(r Repo, c *Commit) error {
 	for _, e := range c.EdgeRefs {
 		var tail, head string
 
+		// TODO: Do there need to be any restrictions on when a src or snk node can be used as a noderef?
+
 		// Create src and snk nodes if they don't already exist.
-		if strings.HasPrefix(e.Src.Node, "src:") {
+		if strings.HasPrefix(e.Src.Node, "src:") && r.GetNode(e.Src.Node) == nil {
 			r.PutNode(&Node{Head: e.Src.Node, Tail: e.Src.Node, Form: FormFileSrc, Count: 1})
 			r.PutRef(e.Src.Node, e.Src.Node)
 		}
-		if strings.HasPrefix(e.Dst.Node, "snk:") {
+		if strings.HasPrefix(e.Dst.Node, "snk:") && r.GetNode(e.Dst.Node) == nil {
 			r.PutNode(&Node{Head: e.Dst.Node, Tail: e.Dst.Node, Form: FormFileSnk, Count: 1})
 			r.PutRef(e.Dst.Node, e.Dst.Node)
 		}
 
 		var err error
-		fmt.Printf("Splitting src node %q at %d\n", e.Src.Node, e.Src.Depth)
 		tail, _, err = SplitNode(r, e.Src.Node, e.Src.Depth)
 		if err != nil {
 			return fmt.Errorf("error splitting src node: %v", err)
@@ -437,7 +432,6 @@ func Apply(r Repo, c *Commit) error {
 				Node:    head,
 				Primary: true,
 			}},
-			OutDeps: [][]int{}, // WHY AM I STILL DOING THIS!?!?!??!?
 		}
 		r.PutNode(middle)
 		r.PutRef(middle.Tail, middle.Head)
@@ -546,8 +540,7 @@ type Node struct {
 	// are necessarily a topologicaly ordered subset of all commits, as such if the frontier
 	// contains all commits and this file is not in conflict, then the correct edge to follow is
 	// always the last edge in the list.
-	Out     []Edge
-	OutDeps [][]int
+	Out []Edge
 }
 
 func CalculateNodeHashes(commit, prev string, form Form, content [][]byte) (head, tail string) {
