@@ -39,7 +39,6 @@ type Repo interface {
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
 func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
-	fmt.Printf("Splitting %s at depth %d\n", node, depth)
 	if depth <= 0 {
 		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
@@ -228,12 +227,14 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		for i := len(n.Out) - 1; i >= 0; i-- {
 			e := n.Out[i]
 			if !f.Observes(e.Commit) {
+				fmt.Printf("Not taking edge from commit %s\n", e.Commit)
 				continue
 			}
 			if metadata.Commits != nil {
 				metadata.Commits[e.Commit] = true
 			}
 			n = r.GetNode(e.Node)
+			fmt.Printf("Took node with content: %q\n", r.GetContent(n.Content))
 			if n == nil {
 				return nil, fmt.Errorf("failed to find node %s in the repo", e.Node)
 			}
@@ -389,7 +390,9 @@ func Apply(r Repo, c *Commit) error {
 			head = e.Dst.Node
 		} else {
 			var err error
+			fmt.Printf("Splitting %s at depth %d\n", e.Dst.Node, e.Dst.Depth)
 			_, head, err = SplitNode(r, e.Dst.Node, e.Dst.Depth)
+			fmt.Printf("Using head %s\n", head)
 			if err != nil {
 				return fmt.Errorf("error splitting dst node: %v", err)
 			}
@@ -407,6 +410,7 @@ func Apply(r Repo, c *Commit) error {
 		if dst == nil {
 			return fmt.Errorf("failed to get dst node %s", head)
 		}
+		fmt.Printf("using dst node %s\n", dst.Head)
 		if e.Content == nil {
 			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Primary: true})
 			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Primary: true})

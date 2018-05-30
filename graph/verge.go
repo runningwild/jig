@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 type Verge struct {
@@ -13,7 +14,10 @@ type Verge struct {
 	// Maps from commit hash to node hash for each edge on the verge.
 	forward, backward map[string]string
 
-	deps, rdeps *simpleGraph
+	// rdeps is a sloppy representation of a subgraph of the dependecy graph.  We permanently track
+	// any edges that are added to rdeps, but we will add and remove nodes, which really means we
+	// changing which commits are being 'tracked' by the verge.
+	rdeps *simpleGraph
 }
 
 func MakeVerge(r Repo, f Frontier, path string) *Verge {
@@ -22,18 +26,20 @@ func MakeVerge(r Repo, f Frontier, path string) *Verge {
 		f:        f,
 		forward:  make(map[string]string),
 		backward: make(map[string]string),
-		deps:     makeSimpleGraph(),
 		rdeps:    makeSimpleGraph(),
 	}
 	n := r.GetNode("src:" + path)
+	fmt.Printf("src node out edges: %v\n", n.Out)
 	for _, e := range n.Out {
 		v.forward[e.Commit] = e.Node
 		c := r.GetCommit(e.Commit)
+		fmt.Printf("Deps on src: %v\n", c.Deps)
+		v.rdeps.addNode(e.Commit)
 		for _, dep := range c.Deps {
-			v.rdeps.addNode(e.Commit)
 			v.rdeps.addEdge(dep, e.Commit)
 		}
 	}
+	fmt.Printf("RDEPS: %v\n", v.rdeps)
 	return v
 }
 
@@ -43,7 +49,6 @@ func (v *Verge) Clone() *Verge {
 		f:        v.f,
 		forward:  make(map[string]string),
 		backward: make(map[string]string),
-		deps:     v.deps.Clone(),
 		rdeps:    v.rdeps.Clone(),
 	}
 	for commit, node := range v.forward {
@@ -69,6 +74,9 @@ func (v *Verge) Retract(node string) {
 // swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
 func (v *Verge) move(node string, mov mover) {
 	n := mov.GetNode(node)
+	fmt.Printf("Moving past %s\n", n.Head)
+	fmt.Printf("In:  %v\n", mov.GetIn(n))
+	fmt.Printf("Out: %v\n", mov.GetOut(n))
 	for _, e := range mov.GetIn(n) {
 		if !v.f.Observes(e.Commit) {
 			continue
@@ -76,6 +84,7 @@ func (v *Verge) move(node string, mov mover) {
 
 		delete(mov.ForwardEdges(), e.Commit)
 		delete(mov.BackwardEdges(), e.Commit)
+		fmt.Printf("removing %s from rdeps\n", e.Commit)
 		v.rdeps.removeNode(e.Commit)
 	}
 	for _, e := range mov.GetOut(n) {
@@ -84,11 +93,14 @@ func (v *Verge) move(node string, mov mover) {
 		}
 		mov.ForwardEdges()[e.Commit] = mov.GetHead(mov.GetNode(e.Node))
 		mov.BackwardEdges()[e.Commit] = mov.GetTail(mov.GetNode(node))
+		v.rdeps.addNode(e.Commit)
 		for _, dep := range v.r.GetCommit(e.Commit).Deps {
-			v.rdeps.addNode(e.Commit)
+			fmt.Printf("adding %s -> %s to rdeps\n", e.Commit, dep)
 			v.rdeps.addEdge(dep, e.Commit)
 		}
 	}
+	fmt.Printf("Dominators: %v\n", v.rdeps.dominators())
+	fmt.Printf("Rdeps:\n%v\n", v.rdeps)
 }
 
 func nodeContent(r Repo, node string) string {
@@ -132,6 +144,11 @@ func (v *Verge) Conflicts() []string {
 	// fmt.Printf("Visible state: %v\n", visible)
 	// Find all commits that are not dominated by at least one other commit.
 	dominators := v.rdeps.dominators()
+	if len(dominators) == 0 {
+		fmt.Printf("%v\n", v.rdeps.nodes)
+		fmt.Printf("%v\n", v.rdeps.edges)
+		panic("no dominators is impossible")
+	}
 	if len(dominators) == 1 {
 		return nil
 	}
@@ -163,6 +180,8 @@ func (v *Verge) look(mov mover) []string {
 	// }
 	// sort.Strings(keys)
 
+	// fmt.Printf("Look Keys: %v\n", keys)
+
 	// TODO: verify the bold claim made regarding moves in the paragraph below.
 	// Acceptable nodes are ones whose inputs edges are all on the Verge.  The one exception is an
 	// incoming edge that comes from a commit with a forward edge currently on the verge, this is
@@ -179,7 +198,9 @@ func (v *Verge) look(mov mover) []string {
 			}
 			observable++
 			target := mov.ForwardEdges()[e.Commit]
-			if target == dst || v.rdeps.nodes[e.Commit] {
+			// Why did I ever use rdeps to decide what an appropriate out edge was!?!?
+			// if target == dst || v.rdeps.nodes[e.Commit] {
+			if target == dst {
 				count++
 			}
 		}
@@ -276,10 +297,19 @@ func (b *backwardMover) BackwardEdges() map[string]string {
 func (v *Verge) AdvanceUntilConflicted() (conflited bool) {
 	for len(v.Conflicts()) == 0 {
 		next := v.Next()
-		if len(next) == 0 {
+		if len(next) == 0 || strings.HasPrefix(next[0], "src:") || strings.HasPrefix(next[0], "snk:") {
 			return false
 		}
+		fmt.Printf("RDeps: %v\n", v.rdeps)
+		fmt.Printf("%d options for advancing:\n", len(next))
+		x := make([]string, len(next))
+		copy(x, next)
+		sort.Strings(x)
+		for _, n := range x {
+			fmt.Printf("  %s: %s\n", n, nodeContent(v.r, n))
+		}
 		node := next[0]
+		fmt.Printf("Advancing past %s: %s\n", node, nodeContent(v.r, node))
 		v.Advance(node)
 	}
 	return true
@@ -476,7 +506,14 @@ func (sg *simpleGraph) removeNode(n string) {
 func (sg *simpleGraph) dominators() []string {
 	var ds []string
 	for node := range sg.nodes {
-		if len(sg.edges[node]) == 0 {
+		count := 0
+		for dep := range sg.edges[node] {
+			if sg.nodes[dep] {
+				count++
+				break
+			}
+		}
+		if count == 0 {
 			ds = append(ds, node)
 		}
 	}

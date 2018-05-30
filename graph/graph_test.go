@@ -873,6 +873,171 @@ func TestVerge(t *testing.T) {
 	})
 }
 
+func TestSplitNodeProperties(t *testing.T) {
+	Convey("SplitNode propagates edges properly", t, func() {
+		r := testutils.MakeFakeRepo()
+
+		c0 := &graph.Commit{
+			Deps: nil,
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 1,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
+					},
+					Dst: graph.NodeRef{
+						Node: "snk:foo.txt",
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c0), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.charlie.delta.echo")
+
+		c1 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 2,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("brAvO", "chArlIE", "dEltA"),
+					},
+					Dst: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 5,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c1), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c1), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.brAvO.chArlIE.dEltA.echo")
+
+		c2 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 2,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("BRaVo", "CHaRLie", "DeLTa"),
+					},
+					Dst: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 5,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c2), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c2), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRaVo.CHaRLie.DeLTa.echo")
+
+		v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
+		fmt.Printf("***************************************************************************\n")
+		conflicts := findConflicts(v)
+		So(conflicts, ShouldHaveLength, 1)
+
+		c3 := &graph.Commit{
+			Deps: []string{c0.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 2,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
+					},
+					Dst: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 5,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c3), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c3), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo")
+		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3), "foo.txt")), ShouldHaveLength, 1)
+
+		metadata := &graph.ReadMetadata{Ranges: new([]graph.ReadRange)}
+		_, err := graph.ReadVersion(r, explicitFrontier(c0, c1, c2, c3), "src:foo.txt", "snk:foo.txt", metadata)
+		So(err, ShouldBeNil)
+		var n string
+		for _, r := range *metadata.Ranges {
+			if r.Commit == c3.Hash() {
+				n = r.Node
+			}
+		}
+		So(n, ShouldNotEqual, "")
+		c4 := &graph.Commit{
+			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash(), c3.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 2,
+					},
+					Dst: graph.NodeRef{
+						Node:  n,
+						Depth: 0,
+					},
+				}, {
+					Src: graph.NodeRef{
+						Node:  n,
+						Depth: 3,
+					},
+					Dst: graph.NodeRef{
+						Node:  "src:foo.txt",
+						Depth: 5,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c4), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c1, c2, c3, c4), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo")
+		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")), ShouldHaveLength, 0)
+
+		// c5 is irrelevant, but it will split a node that c3 must keep its edges on
+		c5 := &graph.Commit{
+			Deps: []string{c3.Hash()},
+			EdgeRefs: []graph.EdgeRef{
+				{
+					Src: graph.NodeRef{
+						Node:  n,
+						Depth: 2,
+					},
+					Content: &graph.NewContent{
+						Form:    graph.FormText,
+						Content: stringsToContent("i do not belong here"),
+					},
+					Dst: graph.NodeRef{
+						Node:  n,
+						Depth: 2,
+					},
+				},
+			},
+		}
+		So(graph.Apply(r, c5), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c1, c2, c3, c5), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.i do not belong here.DELTA.echo")
+
+		fmt.Printf("***************************************************************************\n")
+		fmt.Printf("c3(%s)\nc4(%s)\n", c3.Hash(), c4.Hash())
+		// This line is failing because SplitNode doesn't properly propagate edges, we probably need
+		// a new way to indicate that an edge should propagate completely through a node.
+		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")), ShouldHaveLength, 0)
+	})
+}
 func TestReadVersions(t *testing.T) {
 	Convey("ReadVersions", t, func() {
 		r := testutils.MakeFakeRepo()
@@ -1041,9 +1206,30 @@ func TestReadVersions(t *testing.T) {
 			}
 		}
 		So(n1, ShouldNotEqual, "")
+		fmt.Printf("Relevant node is %q\n", n1)
+		// TODO: Commits need to be verified for correctness.  One thing we should check right here is that
+		// if a commit is trying to resolve conflicting commits that it actually does so.  I'm not sure how
+		// to define it, but it's easy to screw things up here.  In this case we have two commits that conflict
+		// and aren't aligned, so the resolution needs to include both the path in the file covered by both
+		// commits, but also the parts covered by only one where the verge can detect the conflict beginning
+		// or ending.
 		cR12a := &graph.Commit{
 			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash()},
 			EdgeRefs: []graph.EdgeRef{
+				{
+					// This edge is required to make sure that the verge doesn't detect a conflict
+					// here.  This should be verified.
+					// NEXT: verify the above, and also verify the same thing at the end of this
+					// commit where the second commit is present without the first.
+					Src: graph.NodeRef{
+						Node:  head,
+						Depth: 1,
+					},
+					Dst: graph.NodeRef{
+						Node:  head,
+						Depth: 1, // NEXT: There is somethign wrong here, it's not diving into this node like it should
+					},
+				},
 				{
 					Src: graph.NodeRef{
 						Node:  head,
@@ -1051,7 +1237,7 @@ func TestReadVersions(t *testing.T) {
 					},
 					Dst: graph.NodeRef{
 						Node:  n1,
-						Depth: 5,
+						Depth: 1, // NEXT: There is somethign wrong here, it's not diving into this node like it should
 					},
 				},
 				{
@@ -1067,6 +1253,10 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, cR12a), ShouldBeNil)
+		fmt.Printf("Relevant commits:\n")
+		for _, c := range []string{c0.Hash(), c1.Hash(), c2.Hash(), cR12a.Hash()} {
+			fmt.Printf("  %s\n", c)
+		}
 		So(snippet{r, explicitFrontier(c0, c1, c2, cR12a), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.CHARLIE.DELTA.echo.foxtrot.golf.hotel.india.juliet")
 	})
 }
@@ -1104,10 +1294,11 @@ func shouldRead(_a interface{}, _bs ...interface{}) string {
 // We have to advance until we find a conflict, then advance until converged, then retract until we
 // find a conflict, then retract until converged.  *UntilConverged may or may not return with the
 // verge in conflict because it's not always obvious at the start or end of a conflict.
-var bean = 0
+// var bean = 0
 
 func findConflicts(v *graph.Verge) []conflict {
-	fmt.Printf("Conflicts: %v\n", v.Conflicts())
+	fmt.Printf("Conflicts: ")
+	fmt.Printf("%v\n", v.Conflicts())
 	fmt.Printf("Advancing from %v to conflict\n", v)
 	if !v.AdvanceUntilConflicted() {
 		return nil
@@ -1135,10 +1326,10 @@ func findConflicts(v *graph.Verge) []conflict {
 			panic("commits don't match")
 		}
 	}
-	bean++
-	if bean > 2 {
-		panic("e")
-	}
+	// bean++
+	// if bean > 2 {
+	// 	panic("e")
+	// }
 	v.Advance(end)
 	return append([]conflict{conflict{start, end, commits}}, findConflicts(v)...)
 }
