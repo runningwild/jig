@@ -96,6 +96,8 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		}
 	}()
 
+	// TODO: Return an error if we're trying to split a src or snk node.
+
 	contentA := r.PutContent(content[0:depth])
 	contentB := r.PutContent(content[depth:])
 	a := &Node{
@@ -117,7 +119,7 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		Out:     n.Out,
 	}
 
-	r.PutNode(a) // This overwrite the previous node
+	r.PutNode(a) // This will overwrite the previous node
 	r.PutNode(b)
 
 	// Update refs.  This will also update anything that pointed to the tail of the original node to
@@ -412,8 +414,8 @@ func Apply(r Repo, c *Commit) error {
 		}
 		fmt.Printf("using dst node %s\n", dst.Head)
 		if e.Content == nil {
-			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Primary: true})
-			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Primary: true})
+			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head})
+			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail})
 			r.PutNode(src)
 			r.PutNode(dst)
 			continue
@@ -428,21 +430,19 @@ func Apply(r Repo, c *Commit) error {
 			Content: content,
 			Count:   len(e.Content.Content),
 			In: []Edge{{
-				Commit:  commitHash,
-				Node:    tail,
-				Primary: true,
+				Commit: commitHash,
+				Node:   tail,
 			}},
 			Out: []Edge{{
-				Commit:  commitHash,
-				Node:    head,
-				Primary: true,
+				Commit: commitHash,
+				Node:   head,
 			}},
 		}
 		r.PutNode(middle)
 		r.PutRef(middle.Tail, middle.Head)
 
-		src.Out = append(src.Out, Edge{Commit: commitHash, Node: middle.Head, Primary: true})
-		dst.In = append(dst.In, Edge{Commit: commitHash, Node: middle.Tail, Primary: true})
+		src.Out = append(src.Out, Edge{Commit: commitHash, Node: middle.Head})
+		dst.In = append(dst.In, Edge{Commit: commitHash, Node: middle.Tail})
 		r.PutNode(src)
 		r.PutNode(dst)
 	}
@@ -535,13 +535,17 @@ type Node struct {
 	Content string // Content hash
 	Count   int    // Total number of nodes in this Node, will be at least 1.
 
-	// Incoming edges.  If the first edge in this list is a primary edge then it was the one
-	// originally responsible for the content in this Node (and possible others after it).
+	// Incoming edges.
 	In []Edge
+
+	// Internal edges, only indicated by the commit that created them.  These edges are present
+	// between all internal nodes in this Node, and will remain that way when the Node is split.
+	// There may or may not be In or Out edges corresponding to Internal edges.
+	Internal []string
 
 	// Out edges come from different commits.  When traversing we need to select the newest one that
 	// is in the transitive closure of our frontier.  Because edges can only be added once the
-	// commits the depend on have been added, the commits corresponding to the edges in these list
+	// commits that depend on have been added, the commits corresponding to the edges in these list
 	// are necessarily a topologicaly ordered subset of all commits, as such if the frontier
 	// contains all commits and this file is not in conflict, then the correct edge to follow is
 	// always the last edge in the list.
@@ -590,10 +594,6 @@ type Edge struct {
 	// If this edge is coming from an internal node:
 	// "1": This is the end of the file.
 	Node string
-
-	// Primary edges are added as part of a commit.  Secondary (i.e. !Primary) are implicit until a Node is split and
-	// then they are made explicit.
-	Primary bool
 }
 
 func (e *Edge) Hash() string {
@@ -604,12 +604,6 @@ func (e *Edge) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(e.Node)))
 	h.Write([]byte(e.Node))
-
-	if e.Primary {
-		h.Write([]byte{1})
-	} else {
-		h.Write([]byte{0})
-	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

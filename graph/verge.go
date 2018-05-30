@@ -74,7 +74,7 @@ func (v *Verge) Retract(node string) {
 // swap v.forward and v.backward, and that we can swap the in and out edges on all nodes.
 func (v *Verge) move(node string, mov mover) {
 	n := mov.GetNode(node)
-	fmt.Printf("Moving past %s\n", n.Head)
+	fmt.Printf("Moving (%T) past %s\n", mov, n.Head)
 	fmt.Printf("In:  %v\n", mov.GetIn(n))
 	fmt.Printf("Out: %v\n", mov.GetOut(n))
 	for _, e := range mov.GetIn(n) {
@@ -98,6 +98,12 @@ func (v *Verge) move(node string, mov mover) {
 			fmt.Printf("adding %s -> %s to rdeps\n", e.Commit, dep)
 			v.rdeps.addEdge(dep, e.Commit)
 		}
+	}
+	if strings.HasPrefix(node, "snk:") && len(v.rdeps.nodes) == 0 {
+		v.backward[""] = node
+	}
+	if strings.HasPrefix(node, "src:") && len(v.rdeps.nodes) == 0 {
+		v.forward[""] = node
 	}
 	fmt.Printf("Dominators: %v\n", v.rdeps.dominators())
 	fmt.Printf("Rdeps:\n%v\n", v.rdeps)
@@ -144,7 +150,7 @@ func (v *Verge) Conflicts() []string {
 	// fmt.Printf("Visible state: %v\n", visible)
 	// Find all commits that are not dominated by at least one other commit.
 	dominators := v.rdeps.dominators()
-	if len(dominators) == 0 {
+	if len(dominators) == 0 && v.forward[""] == "" && v.backward[""] == "" {
 		fmt.Printf("%v\n", v.rdeps.nodes)
 		fmt.Printf("%v\n", v.rdeps.edges)
 		panic("no dominators is impossible")
@@ -297,7 +303,7 @@ func (b *backwardMover) BackwardEdges() map[string]string {
 func (v *Verge) AdvanceUntilConflicted() (conflited bool) {
 	for len(v.Conflicts()) == 0 {
 		next := v.Next()
-		if len(next) == 0 || strings.HasPrefix(next[0], "src:") || strings.HasPrefix(next[0], "snk:") {
+		if len(next) == 0 {
 			return false
 		}
 		fmt.Printf("RDeps: %v\n", v.rdeps)
@@ -466,7 +472,14 @@ func (sg simpleGraph) Clone() *simpleGraph {
 }
 
 func (sg simpleGraph) String() string {
+	var nodes []string
+	for n := range sg.nodes {
+		nodes = append(nodes, n)
+	}
+	sort.Strings(nodes)
 	var ret string
+	ret += fmt.Sprintf("Nodes: %v\n", nodes)
+
 	var s []string
 	for k := range sg.edges {
 		s = append(s, k)

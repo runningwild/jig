@@ -53,8 +53,8 @@ func TestSplitNode(t *testing.T) {
 			Form:    graph.FormText,
 			Content: contentHash,
 			Count:   7,
-			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt", Primary: true}},
-			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Primary: true}},
+			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt"}},
+			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt"}},
 		})
 		Convey("can split a node where dist < n.Count", func() {
 			tail0, head1, err := graph.SplitNode(r, head, 3)
@@ -943,7 +943,6 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(snippet{r, explicitFrontier(c0, c2), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRaVo.CHaRLie.DeLTa.echo")
 
 		v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
-		fmt.Printf("***************************************************************************\n")
 		conflicts := findConflicts(v)
 		So(conflicts, ShouldHaveLength, 1)
 
@@ -1031,7 +1030,6 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(graph.Apply(r, c5), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c1, c2, c3, c5), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.i do not belong here.DELTA.echo")
 
-		fmt.Printf("***************************************************************************\n")
 		fmt.Printf("c3(%s)\nc4(%s)\n", c3.Hash(), c4.Hash())
 		// This line is failing because SplitNode doesn't properly propagate edges, we probably need
 		// a new way to indicate that an edge should propagate completely through a node.
@@ -1066,6 +1064,7 @@ func TestReadVersions(t *testing.T) {
 		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.juliet")
 		So(ranges, ShouldHaveLength, 1)
 		head := ranges[0].Node
+		fmt.Printf("c0: %v\n", c0.Hash())
 
 		// capitalize bravo through delta
 		c1 := &graph.Commit{
@@ -1088,6 +1087,8 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c1), ShouldBeNil)
+		fmt.Printf("c1: %v\n", c1.Hash())
+		So(snippet{r, explicitFrontier(c0, c1), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.golf.hotel.india.juliet")
 
 		// capitalize charlie through echo
 		c2 := &graph.Commit{
@@ -1110,17 +1111,8 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c2), ShouldBeNil)
-		{
-			var nodes []string
-			for n := range r.Nodes {
-				nodes = append(nodes, n)
-			}
-			sort.Strings(nodes)
-			for _, node := range nodes {
-				fmt.Printf("Node %q: %s\n", node, nodeContent(r, node))
-				fmt.Printf("%v\n\n", r.GetNode(node))
-			}
-		}
+		fmt.Printf("c2: %v\n", c2.Hash())
+		So(snippet{r, explicitFrontier(c0, c2), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.golf.hotel.india.juliet")
 
 		// capitalize juliet
 		c3 := &graph.Commit{
@@ -1142,6 +1134,8 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c3), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c3), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.JULIET")
+		fmt.Printf("c3: %v\n", c3.Hash())
 
 		// capitalize india and delete juliet
 		c4 := &graph.Commit{
@@ -1163,10 +1157,11 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c4), ShouldBeNil)
+		So(snippet{r, explicitFrontier(c0, c4), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.INDIA")
 
 		// The repo should be able to have multiple conflicts, but if the frontier doesn't include
 		// them then we shouldn't see them.
-		{
+		if false {
 			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
 			conflicts := findConflicts(v)
 			So(conflicts, ShouldHaveLength, 1)
@@ -1181,6 +1176,12 @@ func TestReadVersions(t *testing.T) {
 		}
 		{
 			v := graph.MakeVerge(r, explicitFrontier(c0, c3, c4), "foo.txt")
+			fmt.Printf("***************************************************************************\n")
+			fmt.Printf("c0: %v\n", c0.Hash())
+			fmt.Printf("c1: %v\n", c1.Hash())
+			fmt.Printf("c2: %v\n", c2.Hash())
+			fmt.Printf("c3: %v\n", c3.Hash())
+			fmt.Printf("c4: %v\n", c4.Hash())
 			conflicts := findConflicts(v)
 			So(conflicts, ShouldHaveLength, 1)
 			So(conflicts[0].commits, ShouldHaveLength, 2)
@@ -1330,6 +1331,7 @@ func findConflicts(v *graph.Verge) []conflict {
 	// if bean > 2 {
 	// 	panic("e")
 	// }
+	fmt.Printf("Final Advancement\n")
 	v.Advance(end)
 	return append([]conflict{conflict{start, end, commits}}, findConflicts(v)...)
 }
