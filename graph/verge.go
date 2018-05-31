@@ -78,7 +78,10 @@ func (v *Verge) move(node string, mov mover) {
 	fmt.Printf("In:  %v\n", mov.GetIn(n))
 	fmt.Printf("Out: %v\n", mov.GetOut(n))
 	for _, e := range mov.GetIn(n) {
-		if !v.f.Observes(e.Commit) {
+		// We can ignore this edge if the frontier doesn't observe it, or if it is a join edge,
+		// since in that case that commit will continue through the entire node and the verge will
+		// still be cutting it after it has passed it.
+		if !v.f.Observes(e.Commit) || e.Join {
 			continue
 		}
 

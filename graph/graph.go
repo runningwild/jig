@@ -100,6 +100,28 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 
 	contentA := r.PutContent(content[0:depth])
 	contentB := r.PutContent(content[depth:])
+
+	// This is just to verify that things make sense.  Join edges should be present on both In and Out.
+	internalCommits := make(map[string]bool)
+	for _, e := range n.In {
+		if e.Join {
+			internalCommits[e.Commit] = true
+		}
+	}
+	for _, e := range n.Out {
+		if e.Join {
+			if _, ok := internalCommits[e.Commit]; !ok {
+				panic("internal commit was present in Out but not In")
+			}
+			delete(internalCommits, e.Commit)
+		}
+	}
+	if len(internalCommits) != 0 {
+		panic("internal commit was present in In but not Out")
+	}
+
+	fmt.Sprintf("Splitting node %s with In %v and Out %v\n", n.Head, n.In, n.Out)
+
 	a := &Node{
 		Head:    head0,
 		Tail:    tail0,
@@ -107,7 +129,7 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		Content: contentA,
 		Count:   depth,
 		In:      n.In,
-		Out:     []Edge{{Commit: commitHash, Node: head1}},
+		// Out:     []Edge{{Commit: commitHash, Node: head1}},
 	}
 	b := &Node{
 		Head:    head1,
@@ -115,8 +137,16 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 		Form:    n.Form,
 		Content: contentB,
 		Count:   n.Count - depth,
-		In:      []Edge{{Commit: commitHash, Node: tail0}},
-		Out:     n.Out,
+		// In:      []Edge{{Commit: commitHash, Node: tail0}},
+		Out: n.Out,
+	}
+	fmt.Printf("For node %s\n", n.Head)
+	for i, e := range n.In {
+		if e.Join {
+			a.Out = append(a.Out, Edge{Commit: e.Commit, Node: head1, Join: true})
+			b.In = append(b.In, Edge{Commit: e.Commit, Node: tail0, Join: true})
+			fmt.Printf("  Joining edge %d with %s\n", i, e.Commit)
+		}
 	}
 
 	r.PutNode(a) // This will overwrite the previous node
@@ -355,6 +385,7 @@ func Apply(r Repo, c *Commit) error {
 	//   really there are so many more...
 	//   new content nodes do not connect to other new content nodes
 	//   new content nodes have an input and output edge
+	//   refs that specify joins must come in pairs
 
 	for _, e := range c.EdgeRefs {
 		if e.Src.Depth < 1 && !strings.HasPrefix(e.Src.Node, "src:") {
@@ -414,8 +445,9 @@ func Apply(r Repo, c *Commit) error {
 		}
 		fmt.Printf("using dst node %s\n", dst.Head)
 		if e.Content == nil {
-			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head})
-			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail})
+			fmt.Printf("Pinning %t %t\n", e.Src.Join, e.Dst.Join)
+			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Join: e.Src.Join})
+			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Join: e.Dst.Join})
 			r.PutNode(src)
 			r.PutNode(dst)
 			continue
@@ -432,10 +464,12 @@ func Apply(r Repo, c *Commit) error {
 			In: []Edge{{
 				Commit: commitHash,
 				Node:   tail,
+				Join:   true,
 			}},
 			Out: []Edge{{
 				Commit: commitHash,
 				Node:   head,
+				Join:   true,
 			}},
 		}
 		r.PutNode(middle)
@@ -470,6 +504,8 @@ type NodeRef struct {
 	// is referring to an incoming edge into C.  Because of this a src node must specify Depth >= 1,
 	// a dst node must specify Depth >= 0.
 	Depth int
+
+	Join bool
 }
 
 type NewContent struct {
@@ -538,11 +574,6 @@ type Node struct {
 	// Incoming edges.
 	In []Edge
 
-	// Internal edges, only indicated by the commit that created them.  These edges are present
-	// between all internal nodes in this Node, and will remain that way when the Node is split.
-	// There may or may not be In or Out edges corresponding to Internal edges.
-	Internal []string
-
 	// Out edges come from different commits.  When traversing we need to select the newest one that
 	// is in the transitive closure of our frontier.  Because edges can only be added once the
 	// commits that depend on have been added, the commits corresponding to the edges in these list
@@ -594,6 +625,11 @@ type Edge struct {
 	// If this edge is coming from an internal node:
 	// "1": This is the end of the file.
 	Node string
+
+	// Join indicates that an edge continues through a node.  If the In and Out edges from a commit
+	// are Join Edges then it is as though there is an edge from this commit between each adjacent
+	// pair of nodes within the greater Node.
+	Join bool
 }
 
 func (e *Edge) Hash() string {
@@ -604,6 +640,8 @@ func (e *Edge) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, uint32(len(e.Node)))
 	h.Write([]byte(e.Node))
+
+	binary.Write(h, binary.LittleEndian, e.Join)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

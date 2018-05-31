@@ -53,8 +53,8 @@ func TestSplitNode(t *testing.T) {
 			Form:    graph.FormText,
 			Content: contentHash,
 			Count:   7,
-			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt"}},
-			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt"}},
+			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt", Join: true}},
+			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Join: true}},
 		})
 		Convey("can split a node where dist < n.Count", func() {
 			tail0, head1, err := graph.SplitNode(r, head, 3)
@@ -990,11 +990,13 @@ func TestSplitNodeProperties(t *testing.T) {
 					Dst: graph.NodeRef{
 						Node:  n,
 						Depth: 0,
+						Join:  true,
 					},
 				}, {
 					Src: graph.NodeRef{
 						Node:  n,
 						Depth: 3,
+						Join:  true,
 					},
 					Dst: graph.NodeRef{
 						Node:  "src:foo.txt",
