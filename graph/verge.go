@@ -443,6 +443,49 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 	}
 }
 
+// We have to advance until we find a conflict, then advance until converged, then retract until we
+// find a conflict, then retract until converged.  *UntilConverged may or may not return with the
+// verge in conflict because it's not always obvious at the start or end of a conflict.
+// var bean = 0
+
+func findConflicts(v *Verge) ([]Conflict, error) {
+	if !v.AdvanceUntilConflicted() {
+		return nil, nil
+	}
+	end, commits := v.AdvanceUntilConverged()
+	v2 := v.Clone()
+	if !v2.RetractUntilConflicted() {
+		return nil, fmt.Errorf("verge is broken")
+	}
+	start, commits2 := v2.RetractUntilConverged()
+	for k, v := range commits {
+		if commits2[k] != v {
+			return nil, fmt.Errorf("conflict detection failed")
+		}
+	}
+	for k, v := range commits2 {
+		if commits[k] != v {
+			return nil, fmt.Errorf("conflict detection failed")
+		}
+	}
+	v.Advance(end)
+	conflicts, err := findConflicts(v)
+	if err != nil {
+		return nil, err
+	}
+	return append([]Conflict{Conflict{start, end, commits}}, conflicts...), nil
+}
+
+func FindConflicts(r Repo, f Frontier, path string) ([]Conflict, error) {
+	return findConflicts(MakeVerge(r, f, path))
+}
+
+type Conflict struct {
+	Start   string
+	End     string
+	Commits map[string]bool
+}
+
 type simpleGraph struct {
 	edges map[string]map[string]bool
 	nodes map[string]bool

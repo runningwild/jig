@@ -942,8 +942,8 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(graph.Apply(r, c2), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c2), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRaVo.CHaRLie.DeLTa.echo")
 
-		v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
-		conflicts := findConflicts(v)
+		conflicts, err := graph.FindConflicts(r, explicitFrontier(c0, c1, c2), "foo.txt")
+		So(err, ShouldBeNil)
 		So(conflicts, ShouldHaveLength, 1)
 
 		c3 := &graph.Commit{
@@ -967,10 +967,12 @@ func TestSplitNodeProperties(t *testing.T) {
 		}
 		So(graph.Apply(r, c3), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c3), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo")
-		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3), "foo.txt")), ShouldHaveLength, 1)
+		conflicts, err = graph.FindConflicts(r, explicitFrontier(c0, c1, c2, c3), "foo.txt")
+		So(err, ShouldBeNil)
+		So(conflicts, ShouldHaveLength, 1)
 
 		metadata := &graph.ReadMetadata{Ranges: new([]graph.ReadRange)}
-		_, err := graph.ReadVersion(r, explicitFrontier(c0, c1, c2, c3), "src:foo.txt", "snk:foo.txt", metadata)
+		_, err = graph.ReadVersion(r, explicitFrontier(c0, c1, c2, c3), "src:foo.txt", "snk:foo.txt", metadata)
 		So(err, ShouldBeNil)
 		var n string
 		for _, r := range *metadata.Ranges {
@@ -1007,7 +1009,9 @@ func TestSplitNodeProperties(t *testing.T) {
 		}
 		So(graph.Apply(r, c4), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c1, c2, c3, c4), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo")
-		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")), ShouldHaveLength, 0)
+		conflicts, err = graph.FindConflicts(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")
+		So(err, ShouldBeNil)
+		So(conflicts, ShouldHaveLength, 0)
 
 		// c5 is irrelevant, but it will split a node that c3 must keep its edges on
 		c5 := &graph.Commit{
@@ -1035,7 +1039,9 @@ func TestSplitNodeProperties(t *testing.T) {
 		fmt.Printf("c3(%s)\nc4(%s)\n", c3.Hash(), c4.Hash())
 		// This line is failing because SplitNode doesn't properly propagate edges, we probably need
 		// a new way to indicate that an edge should propagate completely through a node.
-		So(findConflicts(graph.MakeVerge(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")), ShouldHaveLength, 0)
+		conflicts, err = graph.FindConflicts(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")
+		So(err, ShouldBeNil)
+		So(conflicts, ShouldHaveLength, 0)
 	})
 }
 func TestReadVersions(t *testing.T) {
@@ -1164,34 +1170,28 @@ func TestReadVersions(t *testing.T) {
 		// The repo should be able to have multiple conflicts, but if the frontier doesn't include
 		// them then we shouldn't see them.
 		if false {
-			v := graph.MakeVerge(r, explicitFrontier(c0, c1, c2), "foo.txt")
-			conflicts := findConflicts(v)
+			conflicts, err := graph.FindConflicts(r, explicitFrontier(c0, c1, c2), "foo.txt")
+			So(err, ShouldBeNil)
 			So(conflicts, ShouldHaveLength, 1)
-			So(conflicts[0].commits, ShouldHaveLength, 2)
-			So(conflicts[0].commits, ShouldContainKey, c1.Hash())
-			So(conflicts[0].commits, ShouldContainKey, c2.Hash())
-			So(snippet{r, explicitFrontier(c0, c1), conflicts[0].start, conflicts[0].end}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot")
-			So(snippet{r, explicitFrontier(c0, c2), conflicts[0].start, conflicts[0].end}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot")
-			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].start, conflicts[0].end, conflicts[0].commits, []byte{'.'})
+			So(conflicts[0].Commits, ShouldHaveLength, 2)
+			So(conflicts[0].Commits, ShouldContainKey, c1.Hash())
+			So(conflicts[0].Commits, ShouldContainKey, c2.Hash())
+			So(snippet{r, explicitFrontier(c0, c1), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot")
+			So(snippet{r, explicitFrontier(c0, c2), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot")
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
 			So(err, ShouldBeNil)
 			So(versions, ShouldHaveLength, 2)
 		}
 		{
-			v := graph.MakeVerge(r, explicitFrontier(c0, c3, c4), "foo.txt")
-			fmt.Printf("***************************************************************************\n")
-			fmt.Printf("c0: %v\n", c0.Hash())
-			fmt.Printf("c1: %v\n", c1.Hash())
-			fmt.Printf("c2: %v\n", c2.Hash())
-			fmt.Printf("c3: %v\n", c3.Hash())
-			fmt.Printf("c4: %v\n", c4.Hash())
-			conflicts := findConflicts(v)
+			conflicts, err := graph.FindConflicts(r, explicitFrontier(c0, c3, c4), "foo.txt")
+			So(err, ShouldBeNil)
 			So(conflicts, ShouldHaveLength, 1)
-			So(conflicts[0].commits, ShouldHaveLength, 2)
-			So(conflicts[0].commits, ShouldContainKey, c3.Hash())
-			So(conflicts[0].commits, ShouldContainKey, c4.Hash())
-			So(snippet{r, explicitFrontier(c0, c3), conflicts[0].start, conflicts[0].end}, shouldRead, "hotel.india.JULIET")
-			So(snippet{r, explicitFrontier(c0, c4), conflicts[0].start, conflicts[0].end}, shouldRead, "hotel.INDIA")
-			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].start, conflicts[0].end, conflicts[0].commits, []byte{'.'})
+			So(conflicts[0].Commits, ShouldHaveLength, 2)
+			So(conflicts[0].Commits, ShouldContainKey, c3.Hash())
+			So(conflicts[0].Commits, ShouldContainKey, c4.Hash())
+			So(snippet{r, explicitFrontier(c0, c3), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.india.JULIET")
+			So(snippet{r, explicitFrontier(c0, c4), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.INDIA")
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
 			So(err, ShouldBeNil)
 			So(versions, ShouldHaveLength, 2)
 		}
@@ -1292,56 +1292,6 @@ func shouldRead(_a interface{}, _bs ...interface{}) string {
 		return fmt.Sprintf("Expected: '%s'\nActual:   '%s'\n", wantMsg, gotMsg)
 	}
 	return ""
-}
-
-// We have to advance until we find a conflict, then advance until converged, then retract until we
-// find a conflict, then retract until converged.  *UntilConverged may or may not return with the
-// verge in conflict because it's not always obvious at the start or end of a conflict.
-// var bean = 0
-
-func findConflicts(v *graph.Verge) []conflict {
-	fmt.Printf("Conflicts: ")
-	fmt.Printf("%v\n", v.Conflicts())
-	fmt.Printf("Advancing from %v to conflict\n", v)
-	if !v.AdvanceUntilConflicted() {
-		return nil
-	}
-	fmt.Printf("Conflicts: %v\n", v.Conflicts())
-	fmt.Printf("Advancing from %v to convergance\n", v)
-	end, commits := v.AdvanceUntilConverged()
-	v2 := v.Clone()
-	fmt.Printf("Conflicts: %v\n", v.Conflicts())
-	fmt.Printf("Retracting from %v to conflict\n", v)
-	if !v2.RetractUntilConflicted() {
-		panic("what the balls")
-		return nil
-	}
-	fmt.Printf("Conflicts: %v\n", v.Conflicts())
-	fmt.Printf("Retracting from %v to convergance\n", v)
-	start, commits2 := v2.RetractUntilConverged()
-	for k, v := range commits {
-		if commits2[k] != v {
-			panic("commits don't match")
-		}
-	}
-	for k, v := range commits2 {
-		if commits[k] != v {
-			panic("commits don't match")
-		}
-	}
-	// bean++
-	// if bean > 2 {
-	// 	panic("e")
-	// }
-	fmt.Printf("Final Advancement\n")
-	v.Advance(end)
-	return append([]conflict{conflict{start, end, commits}}, findConflicts(v)...)
-}
-
-type conflict struct {
-	start   string
-	end     string
-	commits map[string]bool
 }
 
 type allFrontier struct{}
