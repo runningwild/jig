@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"hash"
 	"strings"
 
-	skein512 "github.com/runningwild/skein/hash/512"
+	"golang.org/x/crypto/sha3"
 )
 
 type Repo interface {
@@ -350,8 +349,18 @@ type Version struct {
 	Commits map[string]bool
 }
 
-func jigStandardHasher() hash.Hash {
-	return skein512.NewHash512(24)
+func jigStandardHasher() *jigHasher {
+	return &jigHasher{Buffer: bytes.NewBuffer(nil)}
+}
+
+type jigHasher struct {
+	*bytes.Buffer
+}
+
+func (j *jigHasher) Sum() string {
+	b := make([]byte, 4)
+	sha3.ShakeSum128(b, j.Bytes())
+	return fmt.Sprintf("%x", b)
 }
 
 func HashContent(content [][]byte) string {
@@ -361,7 +370,7 @@ func HashContent(content [][]byte) string {
 		h.Write([]byte{byte(length), byte(length >> 8), byte(length >> 16), byte(length >> 24)})
 		h.Write(line)
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return h.Sum()
 }
 
 func Apply(r Repo, c *Commit) error {
@@ -547,7 +556,7 @@ func (c *Commit) Hash() string {
 		binary.Write(h, binary.LittleEndian, uint32(e.Dst.Depth))
 	}
 
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return h.Sum()
 }
 
 // To apply a Commit we need to do the following:
@@ -594,7 +603,7 @@ func CalculateNodeHashes(commit, prev string, form Form, content [][]byte) (head
 		binary.Write(h, binary.LittleEndian, uint32(len(prev)))
 		h.Write([]byte(prev))
 		h.Write(line)
-		prev = fmt.Sprintf("%x", h.Sum(nil))
+		prev = h.Sum()
 		if head == "" {
 			head = prev
 		}
@@ -643,7 +652,7 @@ func (e *Edge) Hash() string {
 
 	binary.Write(h, binary.LittleEndian, e.Join)
 
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return h.Sum()
 }
 
 type Form int
