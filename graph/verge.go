@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	jpb "github.com/runningwild/jig/proto"
 )
 
 type Verge struct {
@@ -224,11 +226,11 @@ func (v *Verge) look(mov mover) []string {
 // mover let's us write a function that goes forward through the graph and reuse it to do the same
 // thing backwards.  There are two implementations, forwardMover and backwardMover.
 type mover interface {
-	GetIn(n *Node) []Edge
-	GetOut(n *Node) []Edge
-	GetHead(n *Node) string
-	GetTail(n *Node) string
-	GetNode(n string) *Node
+	GetIn(n *jpb.Node) []*jpb.Edge
+	GetOut(n *jpb.Node) []*jpb.Edge
+	GetHead(n *jpb.Node) string
+	GetTail(n *jpb.Node) string
+	GetNode(n string) *jpb.Node
 	Next() []string
 	Prev() []string
 	ForwardEdges() map[string]string
@@ -241,19 +243,19 @@ func (v *Verge) forwardMover() mover {
 
 type forwardMover Verge
 
-func (f *forwardMover) GetIn(n *Node) []Edge {
+func (f *forwardMover) GetIn(n *jpb.Node) []*jpb.Edge {
 	return n.In
 }
-func (f *forwardMover) GetOut(n *Node) []Edge {
+func (f *forwardMover) GetOut(n *jpb.Node) []*jpb.Edge {
 	return n.Out
 }
-func (f *forwardMover) GetHead(n *Node) string {
+func (f *forwardMover) GetHead(n *jpb.Node) string {
 	return n.Head
 }
-func (f *forwardMover) GetTail(n *Node) string {
+func (f *forwardMover) GetTail(n *jpb.Node) string {
 	return n.Tail
 }
-func (f *forwardMover) GetNode(n string) *Node {
+func (f *forwardMover) GetNode(n string) *jpb.Node {
 	return f.r.GetNode(n)
 }
 func (f *forwardMover) Next() []string {
@@ -275,19 +277,19 @@ func (v *Verge) backwardMover() mover {
 
 type backwardMover Verge
 
-func (b *backwardMover) GetIn(n *Node) []Edge {
+func (b *backwardMover) GetIn(n *jpb.Node) []*jpb.Edge {
 	return n.Out
 }
-func (b *backwardMover) GetOut(n *Node) []Edge {
+func (b *backwardMover) GetOut(n *jpb.Node) []*jpb.Edge {
 	return n.In
 }
-func (b *backwardMover) GetHead(n *Node) string {
+func (b *backwardMover) GetHead(n *jpb.Node) string {
 	return n.Tail
 }
-func (b *backwardMover) GetTail(n *Node) string {
+func (b *backwardMover) GetTail(n *jpb.Node) string {
 	return n.Head
 }
-func (b *backwardMover) GetNode(n string) *Node {
+func (b *backwardMover) GetNode(n string) *jpb.Node {
 	return b.r.GetNode(b.r.GetRef(n))
 }
 func (b *backwardMover) Next() []string {
@@ -367,7 +369,7 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 	fmt.Printf("Initial Conflicts: %v\n", v.Conflicts())
 
 	// collapse returns the commits that would be collapsed by moving past n.
-	collapse := func(n *Node) map[string]bool {
+	collapse := func(n *jpb.Node) map[string]bool {
 		remove := make(map[string]bool)
 		for _, e := range mov.GetIn(n) {
 			if track[e.Commit] {
@@ -392,7 +394,7 @@ func (v *Verge) moveUntilConverged(mov mover) (string, map[string]bool) {
 			panic("ran out of ways to advance the verge before everything converged")
 		}
 
-		var n *Node
+		var n *jpb.Node
 		// Try to find a node that doesn't collapse anything.
 		for _, h := range next {
 			m := mov.GetNode(h)
@@ -476,13 +478,21 @@ func findConflicts(v *Verge) ([]Conflict, error) {
 	return append([]Conflict{Conflict{start, end, commits}}, conflicts...), nil
 }
 
+func commitSetToListList(r Repo, set map[string]bool) [][]string {
+	return nil // lists
+}
+
 func FindConflicts(r Repo, f Frontier, path string) ([]Conflict, error) {
 	return findConflicts(MakeVerge(r, f, path))
 }
 
+// NEXT: The Commits field needs to be changed to handle the fact that A,B can conflict with C, but
+// A and B don't conflict with eachother.  It should be sufficient to just group together chains of commits.
+// Oddly enough I think Union Find is the best way to do this.
 type Conflict struct {
-	Start   string
-	End     string
+	Start string
+	End   string
+	//Groups  [][]string // each element is a list of commits that agree on one version of the conflict
 	Commits map[string]bool
 }
 

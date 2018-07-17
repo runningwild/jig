@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	jpb "github.com/runningwild/jig/proto"
 	"golang.org/x/crypto/sha3"
 )
 
 type Repo interface {
 	GetRef(ptr string) string
-	GetNode(nodeHash string) *Node
+	GetNode(nodeHash string) *jpb.Node
 	GetContent(contentHash string) [][]byte
-	GetCommit(commitHash string) *Commit
+	GetCommit(commitHash string) *jpb.Commit
 
 	// List methods all fill out the given slice with as many hashes as possible of the specified,
 	// it returns the number of elements filled.
@@ -25,8 +26,8 @@ type Repo interface {
 	StartTransaction()
 	EndTransaction() error
 	PutRef(ptr, val string)
-	PutNode(n *Node)
-	PutCommit(c *Commit)
+	PutNode(n *jpb.Node)
+	PutCommit(c *jpb.Commit)
 	DeleteNode(nodeHash string)
 
 	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
@@ -37,12 +38,12 @@ type Repo interface {
 // SplitNode takes a node and a depth and replaces that node with two nodes, split at the specified
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
-func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
+func SplitNode(r Repo, node string, depth int32) (tail, head string, err error) {
 	if depth <= 0 {
 		// panic("NOOB")
 		return "", "", fmt.Errorf("cannot split a node at depth <= 0")
 	}
-	var n *Node
+	var n *jpb.Node
 	for n = r.GetNode(node); n != nil && depth > n.Count && len(n.Out) > 0; n = r.GetNode(n.Out[0].Node) {
 		depth -= n.Count
 	}
@@ -51,11 +52,11 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	}
 
 	// For simplicity we'll just special case splitting at the very beginning of a file...
-	if n.Form == FormFileSrc && depth == 1 {
+	if n.Form == jpb.Form_Src && depth == 1 {
 		return n.Tail, "", nil
 	}
 	// ... and the very end.
-	if n.Form == FormFileSnk && depth == 0 {
+	if n.Form == jpb.Form_Snk && depth == 0 {
 		return "", n.Head, nil
 	}
 
@@ -63,17 +64,17 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 
 	// Split the content
 	// TODO: This needs to work for other formats
-	if n.Form != FormText {
+	if n.Form != jpb.Form_Text {
 		panic("unsupported format")
 	}
 	content := r.GetContent(n.Content)
 	if content == nil {
 		return "", "", fmt.Errorf("node content not found")
 	}
-	if len(content) != n.Count {
+	if len(content) != int(n.Count) {
 		return "", "", fmt.Errorf("%q is malformed", n.Head)
 	}
-	if depth == len(content) {
+	if int(depth) == len(content) {
 		// No splitting necessary
 		return n.Tail, n.Out[0].Node, nil
 	}
@@ -121,29 +122,29 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 
 	fmt.Sprintf("Splitting node %s with In %v and Out %v\n", n.Head, n.In, n.Out)
 
-	a := &Node{
+	a := &jpb.Node{
 		Head:    head0,
 		Tail:    tail0,
 		Form:    n.Form,
 		Content: contentA,
-		Count:   depth,
+		Count:   int32(depth),
 		In:      n.In,
 		// Out:     []Edge{{Commit: commitHash, Node: head1}},
 	}
-	b := &Node{
+	b := &jpb.Node{
 		Head:    head1,
 		Tail:    tail1,
 		Form:    n.Form,
 		Content: contentB,
-		Count:   n.Count - depth,
+		Count:   n.Count - int32(depth),
 		// In:      []Edge{{Commit: commitHash, Node: tail0}},
 		Out: n.Out,
 	}
 	fmt.Printf("For node %s\n", n.Head)
 	for i, e := range n.In {
 		if e.Join {
-			a.Out = append(a.Out, Edge{Commit: e.Commit, Node: head1, Join: true})
-			b.In = append(b.In, Edge{Commit: e.Commit, Node: tail0, Join: true})
+			a.Out = append(a.Out, &jpb.Edge{Commit: e.Commit, Node: head1, Join: true})
+			b.In = append(b.In, &jpb.Edge{Commit: e.Commit, Node: tail0, Join: true})
 			fmt.Printf("  Joining edge %d with %s\n", i, e.Commit)
 		}
 	}
@@ -157,6 +158,58 @@ func SplitNode(r Repo, node string, depth int) (tail, head string, err error) {
 	r.PutRef(tail0, head0)
 
 	return tail0, head1, nil
+}
+
+func HumanReadable(r Repo, f, prev Frontier, path string, conflicts []Conflict, join []byte) ([]byte, error) {
+	conflictLookup := make(map[string]int)
+	for i, c := range conflicts {
+		conflictLookup[c.Start] = i
+	}
+	fmt.Printf("Lookups: %v\n", conflictLookup)
+	var lines [][]byte
+	nextNode := "src:" + path
+	for !strings.HasPrefix(nextNode, "snk:") {
+		next := r.GetNode(nextNode)
+		if next == nil {
+			return nil, fmt.Errorf("failed to find node %s", nextNode)
+		}
+		lines = append(lines, r.GetContent(next.Content)...)
+		fmt.Printf("Node: %v %v\n", nextNode, r.GetNode(nextNode).Tail)
+		if ci, ok := conflictLookup[next.Tail]; ok {
+			// We have to display a conflict here.
+			lines = lines[0 : len(lines)-1]
+			con := conflicts[ci]
+			vs, err := ReadVersions(r, f, prev, con.Start, con.End, con.Commits, join)
+			if err != nil {
+				return nil, err
+			}
+
+			lines = append(lines, []byte("<<<<<<<"))
+			for _, v := range vs {
+				lines = append(lines, []byte(fmt.Sprintf("======= %v", v.Commits)))
+				lines = append(lines, v.Data)
+			}
+			lines = append(lines, []byte(">>>>>>>"))
+			next = r.GetNode(con.End)
+			lines = append(lines, r.GetContent(r.GetNode(con.End).Content)[1:]...)
+
+		} else {
+		}
+
+		fmt.Printf("Content(%s): %s\n", next.Head, r.GetContent(next.Content))
+		var edge *jpb.Edge
+		for i := len(next.Out) - 1; i >= 0; i-- {
+			if f.Observes(next.Out[i].Commit) {
+				edge = next.Out[i]
+				break
+			}
+		}
+		if edge == nil {
+			return nil, fmt.Errorf("failed pathing through %q", path)
+		}
+		nextNode = edge.Node
+	}
+	return bytes.Join(lines, join), nil
 }
 
 // ReadVersions returns a []Version with one Version for each conflicting view of the file.  If prev
@@ -305,7 +358,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 	return buf, nil
 }
 
-func nodeCommit(n *Node) string {
+func nodeCommit(n *jpb.Node) string {
 	if len(n.In) != 0 {
 		return n.In[0].Commit
 	}
@@ -315,13 +368,13 @@ func nodeCommit(n *Node) string {
 	panic("how did you let this happen?")
 }
 
-func nodeRef(r Repo, n *Node) (string, int) {
+func nodeRef(r Repo, n *jpb.Node) (string, int) {
 	prev := r.GetNode(r.GetRef(n.In[0].Node))
-	if nodeCommit(prev) != nodeCommit(n) || prev.Form == FormFileSrc {
+	if nodeCommit(prev) != nodeCommit(n) || prev.Form == jpb.Form_Src {
 		return n.Head, 0
 	}
 	ref, d := nodeRef(r, prev)
-	return ref, d + prev.Count
+	return ref, d + int(prev.Count)
 }
 
 type ReadMetadata struct {
@@ -373,9 +426,9 @@ func HashContent(content [][]byte) string {
 	return h.Sum()
 }
 
-func Apply(r Repo, c *Commit) error {
+func Apply(r Repo, c *jpb.Commit) error {
 	// Validate that we haven't already applied this commit.
-	commitHash := c.Hash()
+	commitHash := HashCommit(c)
 	if c2 := r.GetCommit(commitHash); c2 != nil {
 		return fmt.Errorf("this commit has already been applied")
 	}
@@ -412,11 +465,11 @@ func Apply(r Repo, c *Commit) error {
 
 		// Create src and snk nodes if they don't already exist.
 		if strings.HasPrefix(e.Src.Node, "src:") && r.GetNode(e.Src.Node) == nil {
-			r.PutNode(&Node{Head: e.Src.Node, Tail: e.Src.Node, Form: FormFileSrc, Count: 1})
+			r.PutNode(&jpb.Node{Head: e.Src.Node, Tail: e.Src.Node, Form: jpb.Form_Src, Count: 1})
 			r.PutRef(e.Src.Node, e.Src.Node)
 		}
 		if strings.HasPrefix(e.Dst.Node, "snk:") && r.GetNode(e.Dst.Node) == nil {
-			r.PutNode(&Node{Head: e.Dst.Node, Tail: e.Dst.Node, Form: FormFileSnk, Count: 1})
+			r.PutNode(&jpb.Node{Head: e.Dst.Node, Tail: e.Dst.Node, Form: jpb.Form_Snk, Count: 1})
 			r.PutRef(e.Dst.Node, e.Dst.Node)
 		}
 
@@ -455,8 +508,8 @@ func Apply(r Repo, c *Commit) error {
 		fmt.Printf("using dst node %s\n", dst.Head)
 		if e.Content == nil {
 			fmt.Printf("Pinning %t %t\n", e.Src.Join, e.Dst.Join)
-			src.Out = append(src.Out, Edge{Commit: commitHash, Node: dst.Head, Join: e.Src.Join})
-			dst.In = append(dst.In, Edge{Commit: commitHash, Node: src.Tail, Join: e.Dst.Join})
+			src.Out = append(src.Out, &jpb.Edge{Commit: commitHash, Node: dst.Head, Join: e.Src.Join})
+			dst.In = append(dst.In, &jpb.Edge{Commit: commitHash, Node: src.Tail, Join: e.Dst.Join})
 			r.PutNode(src)
 			r.PutNode(dst)
 			continue
@@ -464,18 +517,18 @@ func Apply(r Repo, c *Commit) error {
 
 		content := r.PutContent(e.Content.Content)
 		newHead, newTail := CalculateNodeHashes(commitHash, tail, e.Content.Form, e.Content.Content)
-		middle := &Node{
+		middle := &jpb.Node{
 			Head:    newHead,
 			Tail:    newTail,
 			Form:    e.Content.Form,
 			Content: content,
-			Count:   len(e.Content.Content),
-			In: []Edge{{
+			Count:   int32(len(e.Content.Content)),
+			In: []*jpb.Edge{{
 				Commit: commitHash,
 				Node:   tail,
 				Join:   true,
 			}},
-			Out: []Edge{{
+			Out: []*jpb.Edge{{
 				Commit: commitHash,
 				Node:   head,
 				Join:   true,
@@ -484,8 +537,8 @@ func Apply(r Repo, c *Commit) error {
 		r.PutNode(middle)
 		r.PutRef(middle.Tail, middle.Head)
 
-		src.Out = append(src.Out, Edge{Commit: commitHash, Node: middle.Head})
-		dst.In = append(dst.In, Edge{Commit: commitHash, Node: middle.Tail})
+		src.Out = append(src.Out, &jpb.Edge{Commit: commitHash, Node: middle.Head})
+		dst.In = append(dst.In, &jpb.Edge{Commit: commitHash, Node: middle.Tail})
 		r.PutNode(src)
 		r.PutNode(dst)
 	}
@@ -494,40 +547,7 @@ func Apply(r Repo, c *Commit) error {
 	return nil
 }
 
-type EdgeRef struct {
-	Src, Dst NodeRef
-
-	// Content inserted between Src and Dst.  This can be nil, in which case the edge created by
-	// this EdgeRef connects Src directly to Dst.
-	Content *NewContent
-}
-
-type NodeRef struct {
-	// Typical hash of the node that this NodeRef refers to.  This may also refer to nodes that are
-	// created by this commit.
-	Node string
-
-	// Depth indicates how many nodes should be used before inserting the edge in question.  For
-	// example, if there are nodes connected like A -> B -> C and a src node specifies node A with
-	// depth 2, that refers to an outgoing edge B, but a dst node that specifies node A with depth 2
-	// is referring to an incoming edge into C.  Because of this a src node must specify Depth >= 1,
-	// a dst node must specify Depth >= 0.
-	Depth int
-
-	Join bool
-}
-
-type NewContent struct {
-	Form    Form
-	Content [][]byte
-}
-
-type Commit struct {
-	Deps     []string // Commit hashes
-	EdgeRefs []EdgeRef
-}
-
-func (c *Commit) Hash() string {
+func HashCommit(c *jpb.Commit) string {
 	h := jigStandardHasher()
 
 	binary.Write(h, binary.LittleEndian, uint32(len(c.Deps)))
@@ -565,35 +585,8 @@ func (c *Commit) Hash() string {
 //     internal nodes.
 // 3 - For each edge in EdgeRefs we need to find the corresponding src and dst nodes and insert edges.
 
-// Node contains POD.  All of the edge data is embedded so that they can be split when necessary.
-// When a Node splits, we get two nodes whose Form, Content, and Count are determined in the obvious
-// way.  The first in the pair gets the In edges and an Out edge to the second in the pair, the last
-// gets the Out edges and an In edge to the first in the pair.
-type Node struct {
-	// Head is the hash of the first true node in this Node.  Whenever this Node is split, the head
-	// hash will never change.  Tail is the hash of the last true node in this Node.  If Count == 1
-	// it will always equal Head, otherwise any time this Node is split, the second Node created
-	// will implicitly inherit the value of Tail prior to the split.
-	Head, Tail string
-
-	Form    Form
-	Content string // Content hash
-	Count   int    // Total number of nodes in this Node, will be at least 1.
-
-	// Incoming edges.
-	In []Edge
-
-	// Out edges come from different commits.  When traversing we need to select the newest one that
-	// is in the transitive closure of our frontier.  Because edges can only be added once the
-	// commits that depend on have been added, the commits corresponding to the edges in these list
-	// are necessarily a topologicaly ordered subset of all commits, as such if the frontier
-	// contains all commits and this file is not in conflict, then the correct edge to follow is
-	// always the last edge in the list.
-	Out []Edge
-}
-
-func CalculateNodeHashes(commit, prev string, form Form, content [][]byte) (head, tail string) {
-	if form != FormText {
+func CalculateNodeHashes(commit, prev string, form jpb.Form, content [][]byte) (head, tail string) {
+	if form != jpb.Form_Text {
 		panic("unknown form")
 	}
 	for _, line := range content {
@@ -620,28 +613,7 @@ type Frontier interface {
 	Observes(commit string) bool
 }
 
-type FileNode struct {
-	// Path will always be implicit
-	Out []Edge
-}
-
-type Edge struct {
-	Commit string
-
-	// There are two special values for output node hashes.
-	// If this edge is coming from a file node:
-	// "0": The file has been deleted
-	// If this edge is coming from an internal node:
-	// "1": This is the end of the file.
-	Node string
-
-	// Join indicates that an edge continues through a node.  If the In and Out edges from a commit
-	// are Join Edges then it is as though there is an edge from this commit between each adjacent
-	// pair of nodes within the greater Node.
-	Join bool
-}
-
-func (e *Edge) Hash() string {
+func HashEdge(e *jpb.Edge) string {
 	h := jigStandardHasher()
 
 	binary.Write(h, binary.LittleEndian, uint32(len(e.Commit)))
@@ -654,18 +626,3 @@ func (e *Edge) Hash() string {
 
 	return h.Sum()
 }
-
-type Form int
-
-const (
-	// FormText is a text file.  Boundaries are '\n' or EOF.  A file that ends with a newline will
-	// have a zero-length line at the end.
-	FormText = iota
-
-	// Used for the first and last nodes in a file only.
-	FormFileSrc
-	FormFileSnk
-
-	// FormBinary is a binary file.  TODO: Need to define the chunking algorithm
-//	FormBinary
-)

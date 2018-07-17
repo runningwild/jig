@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/runningwild/jig/graph"
+	jpb "github.com/runningwild/jig/proto"
 	"github.com/runningwild/jig/testutils"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -32,11 +33,11 @@ func TestNodeHashes(t *testing.T) {
 	Convey("CalculateNodeHashes", t, func() {
 		c0 := stringsToContent("foo", "bar", "wing")
 		c1 := stringsToContent("ding", "monkey", "ball")
-		head, tail := graph.CalculateNodeHashes("commit", "prev", graph.FormText, append(c0, c1...))
+		head, tail := graph.CalculateNodeHashes("commit", "prev", jpb.Form_Text, append(c0, c1...))
 		So(head, ShouldNotEqual, tail)
-		head2, middle := graph.CalculateNodeHashes("commit", "prev", graph.FormText, c0)
+		head2, middle := graph.CalculateNodeHashes("commit", "prev", jpb.Form_Text, c0)
 		So(head2, ShouldEqual, head)
-		_, tail2 := graph.CalculateNodeHashes("commit", middle, graph.FormText, c1)
+		_, tail2 := graph.CalculateNodeHashes("commit", middle, jpb.Form_Text, c1)
 		So(tail2, ShouldEqual, tail)
 	})
 }
@@ -46,15 +47,15 @@ func TestSplitNode(t *testing.T) {
 		r := testutils.MakeFakeRepo()
 		sampleContent := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf")
 		contentHash := r.PutContent(sampleContent)
-		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", graph.FormText, sampleContent)
-		r.PutNode(&graph.Node{
+		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", jpb.Form_Text, sampleContent)
+		r.PutNode(&jpb.Node{
 			Head:    head,
 			Tail:    tail,
-			Form:    graph.FormText,
+			Form:    jpb.Form_Text,
 			Content: contentHash,
 			Count:   7,
-			In:      []graph.Edge{{Commit: "commit-0", Node: "src:sample.txt", Join: true}},
-			Out:     []graph.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Join: true}},
+			In:      []*jpb.Edge{{Commit: "commit-0", Node: "src:sample.txt", Join: true}},
+			Out:     []*jpb.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Join: true}},
 		})
 		Convey("can split a node where dist < n.Count", func() {
 			tail0, head1, err := graph.SplitNode(r, head, 3)
@@ -106,19 +107,19 @@ func TestSplitNode(t *testing.T) {
 func TestCommits(t *testing.T) {
 	Convey("Commits", t, func() {
 		r := testutils.MakeFakeRepo()
-		c0 := &graph.Commit{
+		c0 := &jpb.Commit{
 			Deps: nil,
-			EdgeRefs: []graph.EdgeRef{
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -130,20 +131,20 @@ func TestCommits(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf")
 		So(ranges, ShouldHaveLength, 1)
-		So(ranges[0].Commit, ShouldEqual, c0.Hash())
+		So(ranges[0].Commit, ShouldEqual, graph.HashCommit(c0))
 		head := ranges[0].Node
 
 		Convey("can delete the first line of a file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1,
 						},
@@ -157,19 +158,19 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can modify the first line of a file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("ALPHA"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1, // bravo
 						},
@@ -183,16 +184,16 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can delete the last line of a file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
 						},
@@ -206,19 +207,19 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can modify the last line of a file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("GOLF"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
 						},
@@ -232,38 +233,38 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can move the first line of a file into the middle of the file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1, // bravo
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // delta
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 0, // alpha
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1, // alpha
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // echo
 						},
@@ -277,38 +278,38 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can move the last line of a file into the middle of the file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // charlie
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6, // golf
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 7, // golf
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
 						},
@@ -322,38 +323,38 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can move the first two lines of a file into the middle of the file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 2, // charlie
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // delta
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 0, // alpha
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 2, // bravo
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // echo
 						},
@@ -367,38 +368,38 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can move the last two lines of a file into the middle of the file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // charlie
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 5, // foxtrot
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 7, // golf
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
 						},
 					},
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 5, // echo
 						},
 						Content: nil,
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
 						},
@@ -412,19 +413,19 @@ func TestCommits(t *testing.T) {
 		})
 
 		Convey("can insert two lines in the middle of the file", func() {
-			c1 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c1 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // charlie
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("thunder", "buttons"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
 						},
@@ -444,7 +445,7 @@ func TestCommits(t *testing.T) {
 				So(err, ShouldBeNil)
 				var relevant []graph.ReadRange
 				for _, r := range ranges {
-					if r.Commit == c1.Hash() {
+					if r.Commit == graph.HashCommit(c1) {
 						relevant = append(relevant, r)
 					}
 				}
@@ -453,16 +454,16 @@ func TestCommits(t *testing.T) {
 
 				// Now we're going to delete the line before the thunder.buttons. This will require
 				// creating an edge that points directly at that node.
-				c2 := &graph.Commit{
-					Deps: []string{c0.Hash()},
-					EdgeRefs: []graph.EdgeRef{
+				c2 := &jpb.Commit{
+					Deps: []string{graph.HashCommit(c0)},
+					EdgeRefs: []*jpb.EdgeRef{
 						{
-							Src: graph.NodeRef{
+							Src: &jpb.NodeRef{
 								Node:  head,
 								Depth: 2, // bravo
 							},
 							Content: nil,
-							Dst: graph.NodeRef{
+							Dst: &jpb.NodeRef{
 								Node:  relevant[0].Node,
 								Depth: 0,
 							},
@@ -481,19 +482,19 @@ func TestCommits(t *testing.T) {
 func TestVerge(t *testing.T) {
 	Convey("applied commits", t, func() {
 		r := testutils.MakeFakeRepo()
-		c0 := &graph.Commit{
+		c0 := &jpb.Commit{
 			Deps: nil,
-			EdgeRefs: []graph.EdgeRef{
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -506,19 +507,19 @@ func TestVerge(t *testing.T) {
 		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
 		So(ranges, ShouldHaveLength, 1)
 		head := ranges[0].Node
-		c1 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c1 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 6,
 					},
@@ -528,19 +529,19 @@ func TestVerge(t *testing.T) {
 		So(graph.Apply(r, c1), ShouldBeNil)
 
 		//  This inserts some text between delta and echo.
-		c2 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c2 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("buttons", "the", "buttonsball"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
 					},
@@ -550,19 +551,19 @@ func TestVerge(t *testing.T) {
 		So(graph.Apply(r, c2), ShouldBeNil)
 
 		// This commit replaces resolves the conflict between c1 and c2.
-		c3 := &graph.Commit{
-			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c3 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0), graph.HashCommit(c1), graph.HashCommit(c2)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("all", "your", "base", "are", "belong", "to", "us"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 9,
 					},
@@ -614,8 +615,8 @@ func TestVerge(t *testing.T) {
 				if len(v.Conflicts()) > 0 {
 					foundConflict = true
 					So(len(v.Conflicts()), ShouldEqual, 2)
-					So(v.Conflicts(), ShouldContain, c1.Hash())
-					So(v.Conflicts(), ShouldContain, c2.Hash())
+					So(v.Conflicts(), ShouldContain, graph.HashCommit(c1))
+					So(v.Conflicts(), ShouldContain, graph.HashCommit(c2))
 				}
 			}
 			So(foundConflict, ShouldBeTrue)
@@ -643,19 +644,19 @@ func TestVerge(t *testing.T) {
 
 		Convey("advancement functions can find conflicts", func() {
 			// This inserts some text between delta and echo, just like c2, but in all caps.
-			c2x := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c2x := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("BUTTONS", "THE", "BUTTONSBALL"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
 						},
@@ -665,15 +666,15 @@ func TestVerge(t *testing.T) {
 			So(graph.Apply(r, c2x), ShouldBeNil)
 
 			// Deletes 'hotel'
-			c4 := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c4 := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 7,
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 8,
 						},
@@ -698,19 +699,19 @@ func TestVerge(t *testing.T) {
 			}
 
 			// capitalizes 'bravo' and 'charlie'
-			c5a := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c5a := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("BRAVO", "CHARLIE"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3,
 						},
@@ -720,19 +721,19 @@ func TestVerge(t *testing.T) {
 			So(graph.Apply(r, c5a), ShouldBeNil)
 
 			// capitalizes 'echo' and 'foxtrot'
-			c5b := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c5b := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("ECHO", "FOXTROT"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6,
 						},
@@ -742,19 +743,19 @@ func TestVerge(t *testing.T) {
 			So(graph.Apply(r, c5b), ShouldBeNil)
 
 			// munges 'bravo', 'charlie', and 'delta'
-			c6a := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c6a := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("brAvO", "chArlIE", "dEltA"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
 						},
@@ -764,19 +765,19 @@ func TestVerge(t *testing.T) {
 			So(graph.Apply(r, c6a), ShouldBeNil)
 
 			// munges 'echo' and 'foxtrot'
-			c6b := &graph.Commit{
-				Deps: []string{c0.Hash()},
-				EdgeRefs: []graph.EdgeRef{
+			c6b := &jpb.Commit{
+				Deps: []string{graph.HashCommit(c0)},
+				EdgeRefs: []*jpb.EdgeRef{
 					{
-						Src: graph.NodeRef{
+						Src: &jpb.NodeRef{
 							Node:  head,
 							Depth: 5,
 						},
-						Content: &graph.NewContent{
-							Form:    graph.FormText,
+						Content: &jpb.NewContent{
+							Form:    jpb.Form_Text,
 							Content: stringsToContent("fOxtrOt"),
 						},
-						Dst: graph.NodeRef{
+						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6,
 						},
@@ -785,11 +786,11 @@ func TestVerge(t *testing.T) {
 			}
 			So(graph.Apply(r, c6b), ShouldBeNil)
 
-			fmt.Printf("c0(%s): %s\n", c0.Hash(), "all the stuff")
-			fmt.Printf("c5a(%s): %s\n", c5a.Hash(), "BRAVO.CHARLIE")
-			fmt.Printf("c5b(%s): %s\n", c5b.Hash(), "ECHO.FOXTROT")
-			fmt.Printf("c6a(%s): %s\n", c6a.Hash(), "brAvO.chArlIE.dEltA")
-			fmt.Printf("c6b(%s): %s\n", c6b.Hash(), "fOxtrOt")
+			fmt.Printf("c0(%s): %s\n", graph.HashCommit(c0), "all the stuff")
+			fmt.Printf("c5a(%s): %s\n", graph.HashCommit(c5a), "BRAVO.CHARLIE")
+			fmt.Printf("c5b(%s): %s\n", graph.HashCommit(c5b), "ECHO.FOXTROT")
+			fmt.Printf("c6a(%s): %s\n", graph.HashCommit(c6a), "brAvO.chArlIE.dEltA")
+			fmt.Printf("c6b(%s): %s\n", graph.HashCommit(c6b), "fOxtrOt")
 			fmt.Printf("Advancing Verge\n")
 
 			f := explicitFrontier(c0, c5a, c5b, c6a, c6b)
@@ -833,15 +834,15 @@ func TestVerge(t *testing.T) {
 					conflictsList = append(conflictsList, c)
 				}
 			})
-			So(conflictsList, ShouldNotContain, c0.Hash())
-			So(conflictsList, ShouldNotContain, c1.Hash())
-			So(conflictsList, ShouldNotContain, c2.Hash())
-			So(conflictsList, ShouldNotContain, c2x.Hash())
-			So(conflictsList, ShouldNotContain, c4.Hash())
-			So(conflictsList, ShouldContain, c5a.Hash())
-			So(conflictsList, ShouldContain, c5b.Hash())
-			So(conflictsList, ShouldContain, c6a.Hash())
-			So(conflictsList, ShouldContain, c6b.Hash())
+			So(conflictsList, ShouldNotContain, graph.HashCommit(c0))
+			So(conflictsList, ShouldNotContain, graph.HashCommit(c1))
+			So(conflictsList, ShouldNotContain, graph.HashCommit(c2))
+			So(conflictsList, ShouldNotContain, graph.HashCommit(c2x))
+			So(conflictsList, ShouldNotContain, graph.HashCommit(c4))
+			So(conflictsList, ShouldContain, graph.HashCommit(c5a))
+			So(conflictsList, ShouldContain, graph.HashCommit(c5b))
+			So(conflictsList, ShouldContain, graph.HashCommit(c6a))
+			So(conflictsList, ShouldContain, graph.HashCommit(c6b))
 			versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, conflicts, []byte("."))
 			So(err, ShouldBeNil)
 			So(versions, ShouldNotBeNil)
@@ -856,14 +857,14 @@ func TestVerge(t *testing.T) {
 				delete(unhit, s)
 				if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
 					So(len(versions[i].Commits), ShouldEqual, 2)
-					So(versions[i].Commits[c5a.Hash()], ShouldBeTrue)
-					So(versions[i].Commits[c5b.Hash()], ShouldBeTrue)
+					So(versions[i].Commits[graph.HashCommit(c5a)], ShouldBeTrue)
+					So(versions[i].Commits[graph.HashCommit(c5b)], ShouldBeTrue)
 				} else if s == "alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf" {
 					So(len(versions[i].Commits), ShouldEqual, 1)
-					So(versions[i].Commits[c6a.Hash()], ShouldBeTrue)
+					So(versions[i].Commits[graph.HashCommit(c6a)], ShouldBeTrue)
 				} else if s == "alpha.bravo.charlie.delta.echo.fOxtrOt.golf" {
 					So(len(versions[i].Commits), ShouldEqual, 1)
-					So(versions[i].Commits[c6b.Hash()], ShouldBeTrue)
+					So(versions[i].Commits[graph.HashCommit(c6b)], ShouldBeTrue)
 				} else {
 					t.Errorf("unexpected version %q", s)
 				}
@@ -877,19 +878,19 @@ func TestSplitNodeProperties(t *testing.T) {
 	Convey("SplitNode propagates edges properly", t, func() {
 		r := testutils.MakeFakeRepo()
 
-		c0 := &graph.Commit{
+		c0 := &jpb.Commit{
 			Deps: nil,
-			EdgeRefs: []graph.EdgeRef{
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -898,19 +899,19 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(graph.Apply(r, c0), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.charlie.delta.echo")
 
-		c1 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c1 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("brAvO", "chArlIE", "dEltA"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
 					},
@@ -920,19 +921,19 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(graph.Apply(r, c1), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c1), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.brAvO.chArlIE.dEltA.echo")
 
-		c2 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c2 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("BRaVo", "CHaRLie", "DeLTa"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
 					},
@@ -946,19 +947,19 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(conflicts, ShouldHaveLength, 1)
 
-		c3 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c3 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
 					},
@@ -976,31 +977,31 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(err, ShouldBeNil)
 		var n string
 		for _, r := range *metadata.Ranges {
-			if r.Commit == c3.Hash() {
+			if r.Commit == graph.HashCommit(c3) {
 				n = r.Node
 			}
 		}
 		So(n, ShouldNotEqual, "")
-		c4 := &graph.Commit{
-			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash(), c3.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c4 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0), graph.HashCommit(c1), graph.HashCommit(c2), graph.HashCommit(c3)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  n,
 						Depth: 0,
 						Join:  true,
 					},
 				}, {
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  n,
 						Depth: 3,
 						Join:  true,
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
 					},
@@ -1014,19 +1015,19 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(conflicts, ShouldHaveLength, 0)
 
 		// c5 is irrelevant, but it will split a node that c3 must keep its edges on
-		c5 := &graph.Commit{
-			Deps: []string{c3.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c5 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c3)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  n,
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("i do not belong here"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  n,
 						Depth: 2,
 					},
@@ -1036,7 +1037,7 @@ func TestSplitNodeProperties(t *testing.T) {
 		So(graph.Apply(r, c5), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c1, c2, c3, c5), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.i do not belong here.DELTA.echo")
 
-		fmt.Printf("c3(%s)\nc4(%s)\n", c3.Hash(), c4.Hash())
+		fmt.Printf("c3(%s)\nc4(%s)\n", graph.HashCommit(c3), graph.HashCommit(c4))
 		// This line is failing because SplitNode doesn't properly propagate edges, we probably need
 		// a new way to indicate that an edge should propagate completely through a node.
 		conflicts, err = graph.FindConflicts(r, explicitFrontier(c0, c1, c2, c3, c4), "foo.txt")
@@ -1047,19 +1048,19 @@ func TestSplitNodeProperties(t *testing.T) {
 func TestReadVersions(t *testing.T) {
 	Convey("ReadVersions", t, func() {
 		r := testutils.MakeFakeRepo()
-		c0 := &graph.Commit{
+		c0 := &jpb.Commit{
 			Deps: nil,
-			EdgeRefs: []graph.EdgeRef{
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -1072,22 +1073,22 @@ func TestReadVersions(t *testing.T) {
 		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.juliet")
 		So(ranges, ShouldHaveLength, 1)
 		head := ranges[0].Node
-		fmt.Printf("c0: %v\n", c0.Hash())
+		fmt.Printf("c0: %v\n", graph.HashCommit(c0))
 
 		// capitalize bravo through delta
-		c1 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c1 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 1,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
 					},
@@ -1095,23 +1096,23 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c1), ShouldBeNil)
-		fmt.Printf("c1: %v\n", c1.Hash())
+		fmt.Printf("c1: %v\n", graph.HashCommit(c1))
 		So(snippet{r, explicitFrontier(c0, c1), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.golf.hotel.india.juliet")
 
 		// capitalize charlie through echo
-		c2 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c2 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 2,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("CHARLIE", "DELTA", "ECHO"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 5,
 					},
@@ -1119,23 +1120,23 @@ func TestReadVersions(t *testing.T) {
 			},
 		}
 		So(graph.Apply(r, c2), ShouldBeNil)
-		fmt.Printf("c2: %v\n", c2.Hash())
+		fmt.Printf("c2: %v\n", graph.HashCommit(c2))
 		So(snippet{r, explicitFrontier(c0, c2), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.golf.hotel.india.juliet")
 
 		// capitalize juliet
-		c3 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c3 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 9,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("JULIET"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -1143,22 +1144,22 @@ func TestReadVersions(t *testing.T) {
 		}
 		So(graph.Apply(r, c3), ShouldBeNil)
 		So(snippet{r, explicitFrontier(c0, c3), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.JULIET")
-		fmt.Printf("c3: %v\n", c3.Hash())
+		fmt.Printf("c3: %v\n", graph.HashCommit(c3))
 
 		// capitalize india and delete juliet
-		c4 := &graph.Commit{
-			Deps: []string{c0.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		c4 := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 8,
 					},
-					Content: &graph.NewContent{
-						Form:    graph.FormText,
+					Content: &jpb.NewContent{
+						Form:    jpb.Form_Text,
 						Content: stringsToContent("INDIA"),
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
 				},
@@ -1174,8 +1175,8 @@ func TestReadVersions(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(conflicts, ShouldHaveLength, 1)
 			So(conflicts[0].Commits, ShouldHaveLength, 2)
-			So(conflicts[0].Commits, ShouldContainKey, c1.Hash())
-			So(conflicts[0].Commits, ShouldContainKey, c2.Hash())
+			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c1))
+			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c2))
 			So(snippet{r, explicitFrontier(c0, c1), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot")
 			So(snippet{r, explicitFrontier(c0, c2), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot")
 			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
@@ -1187,8 +1188,8 @@ func TestReadVersions(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(conflicts, ShouldHaveLength, 1)
 			So(conflicts[0].Commits, ShouldHaveLength, 2)
-			So(conflicts[0].Commits, ShouldContainKey, c3.Hash())
-			So(conflicts[0].Commits, ShouldContainKey, c4.Hash())
+			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c3))
+			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c4))
 			So(snippet{r, explicitFrontier(c0, c3), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.india.JULIET")
 			So(snippet{r, explicitFrontier(c0, c4), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.INDIA")
 			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
@@ -1204,7 +1205,7 @@ func TestReadVersions(t *testing.T) {
 		So(err, ShouldBeNil)
 		var n1 string
 		for _, r := range *metadata.Ranges {
-			if r.Commit == c1.Hash() {
+			if r.Commit == graph.HashCommit(c1) {
 				n1 = r.Node
 			}
 		}
@@ -1216,39 +1217,39 @@ func TestReadVersions(t *testing.T) {
 		// and aren't aligned, so the resolution needs to include both the path in the file covered by both
 		// commits, but also the parts covered by only one where the verge can detect the conflict beginning
 		// or ending.
-		cR12a := &graph.Commit{
-			Deps: []string{c0.Hash(), c1.Hash(), c2.Hash()},
-			EdgeRefs: []graph.EdgeRef{
+		cR12a := &jpb.Commit{
+			Deps: []string{graph.HashCommit(c0), graph.HashCommit(c1), graph.HashCommit(c2)},
+			EdgeRefs: []*jpb.EdgeRef{
 				{
 					// This edge is required to make sure that the verge doesn't detect a conflict
 					// here.  This should be verified.
 					// NEXT: verify the above, and also verify the same thing at the end of this
 					// commit where the second commit is present without the first.
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 1,
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
-						Depth: 1, // NEXT: There is somethign wrong here, it's not diving into this node like it should
+						Depth: 1,
 					},
 				},
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  head,
 						Depth: 2,
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  n1,
-						Depth: 1, // NEXT: There is somethign wrong here, it's not diving into this node like it should
+						Depth: 1,
 					},
 				},
 				{
-					Src: graph.NodeRef{
+					Src: &jpb.NodeRef{
 						Node:  n1,
 						Depth: 3,
 					},
-					Dst: graph.NodeRef{
+					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
 					},
@@ -1257,7 +1258,7 @@ func TestReadVersions(t *testing.T) {
 		}
 		So(graph.Apply(r, cR12a), ShouldBeNil)
 		fmt.Printf("Relevant commits:\n")
-		for _, c := range []string{c0.Hash(), c1.Hash(), c2.Hash(), cR12a.Hash()} {
+		for _, c := range []string{graph.HashCommit(c0), graph.HashCommit(c1), graph.HashCommit(c2), graph.HashCommit(cR12a)} {
 			fmt.Printf("  %s\n", c)
 		}
 		So(snippet{r, explicitFrontier(c0, c1, c2, cR12a), "src:foo.txt", "snk:foo.txt"}, shouldRead, "alpha.bravo.CHARLIE.DELTA.echo.foxtrot.golf.hotel.india.juliet")
@@ -1298,10 +1299,10 @@ type allFrontier struct{}
 
 func (allFrontier) Observes(string) bool { return true }
 
-func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
+func explicitFrontier(commits ...*jpb.Commit) simpleFrontier {
 	s := make(simpleFrontier)
 	for _, c := range commits {
-		s[c.Hash()] = true
+		s[graph.HashCommit(c)] = true
 	}
 	return s
 }
@@ -1323,12 +1324,12 @@ type commitOnlyRepo struct {
 	commits map[string][]string
 }
 
-func (r *commitOnlyRepo) GetCommit(c string) *graph.Commit {
+func (r *commitOnlyRepo) GetCommit(c string) *jpb.Commit {
 	deps := r.commits[c]
 	if deps == nil {
 		return nil
 	}
-	return &graph.Commit{
+	return &jpb.Commit{
 		Deps: deps,
 	}
 }

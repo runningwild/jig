@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package jig;
+
+
+message Repo {
+
+}
+
+// Node contains POD.  All of the edge data is embedded so that they can be split when necessary.
+// When a Node splits, we get two nodes whose Form, Content, and Count are determined in the obvious
+// way.  The first in the pair gets the In edges and an Out edge to the second in the pair, the last
+// gets the Out edges and an In edge to the first in the pair.
+message Node {
+	// Head is the hash of the first true node in this Node.  Whenever this Node is split, the head
+	// hash will never change.
+	string head = 1;
+	
+	// Tail is the hash of the last true node in this Node.  If Count == 1 it will always equal
+	// Head, otherwise any time this Node is split, the second Node created will implicitly
+	// inherit the value of Tail prior to the split.
+	string tail = 2;
+
+	Form form = 3;
+
+	// Hash of the content, not the content itself.
+	string content = 4;
+
+	// Number of internal nodes represented by this Node.
+	int32 count = 5;
+
+	repeated Edge in = 6;
+	repeated Edge out = 7;
+}
+
+enum Form {
+	Unknown = 0;
+	Src = 1;
+	Snk = 2;
+	Text = 3;
+}
+
+message Edge {
+	string commit = 1;
+
+	// There are two special values for output node hashes.
+	// If this edge is coming from a file node:
+	// "0": The file has been deleted
+	// If this edge is coming from an internal node:
+	// "1": This is the end of the file.
+	string node = 2;
+
+	// Join indicates that an edge continues through a node.  If the In and Out edges from a commit
+	// are Join Edges then it is as though there is an edge from this commit between each adjacent
+	// pair of nodes within the greater Node.
+	bool join = 3;
+}
+
+message Commit {
+	repeated string deps = 1;
+	repeated EdgeRef edge_refs = 2;
+}
+
+message EdgeRef {
+	NodeRef src = 1;
+	NodeRef dst = 2;
+
+	// Content inserted between Src and Dst.  This can be nil, in which case the edge created by
+	// this EdgeRef connects Src directly to Dst.
+	NewContent content = 3;
+}
+
+message NewContent {
+	Form form = 1;
+	repeated bytes content = 2;
+}
+
+message NodeRef {
+	// Typical hash of the node that this NodeRef refers to.  This may also refer to nodes that are
+	// created by this commit.
+	string node = 1;
+
+	// Depth indicates how many nodes should be used before inserting the edge in question.  For
+	// example, if there are nodes connected like A -> B -> C and a src node specifies node A with
+	// depth 2, that refers to an outgoing edge B, but a dst node that specifies node A with depth 2
+	// is referring to an incoming edge into C.  Because of this a src node must specify Depth >= 1,
+	// a dst node must specify Depth >= 0.
+	int32 depth = 2;
+
+	bool join = 3;
+}
+
+//
+//type Repo interface {
+//	GetRef(ptr string) string
+//	GetNode(nodeHash string) *Node
+//	GetContent(contentHash string) [][]byte
+//	GetCommit(commitHash string) *Commit
+//
+//	// List methods all fill out the given slice with as many hashes as possible of the specified,
+//	// it returns the number of elements filled.
+//	ListRefs(start string, refs []string) (n int)
+//	ListNodes(start string, nodes []string) (n int)
+//	ListContents(start string, contents []string) (n int)
+//	ListCommits(start string, commits []string) (n int)
+//
+//	StartTransaction()
+//	EndTransaction() error
+//	PutRef(ptr, val string)
+//	PutNode(n *Node)
+//	PutCommit(c *Commit)
+//	DeleteNode(nodeHash string)
+//
+//	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
+//	PutContent(content [][]byte) string
+//	DeleteContent(contentHash string)
+//}
+//
+//
+//message StartJobRequest {
+//	JobParams job_params = 1;
+//}
+//
+//message StartJobReply {
+//	int32 concurrent = 1;
+//}
+//
+//message TaskRequest {
+//	string id = 1;
+//	// id of the Job to sanity check that this is from the appropriate master.
+//
+//	Tile tile = 2;
+//}
+//
+//message TaskReply {
+//	Placement placement = 1;
+//}
+//
+//message StopJobRequest {
+//	string id = 1;
+//	// id of the job to stop.
+//}
+//
+//message StopJobReply {}
+//
+//
+//message PlaceTilesRequest {
+//	oneof request {
+//		JobParams params = 1;
+//		Tile tile = 2;
+//	}
+//}
+//
+//message JobParams {
+//	string id = 1;
+//	// id is used to indicate to a worker which job each RPC applies to.  Mostly this is used for
+//	// ensuring that different masters aren't stepping on each others' toes.
+//
+//	string primary_id = 2;
+//	// primary_id is the id of the primary image after being uploaded to the photostore.
+//
+//	bool greyscale = 3;
+//	// greyscale indicates that only the brightness of pixels matters.  Internally it will use the
+//	// first channel of the images, which for tiles will necessarily be the L from LAB color, but
+//	// for the primary will be the R from RGB, or however it is encoded.
+//
+//	double downsample = 4;
+//	// downsample affects only the resolution that Placer operates at, the primary image itself is
+//	// still considered to be the same size as specified in primary_data.
+//}
+//
+//message Tile {
+//	string id = 1;
+//
+//	double scale = 2;
+//	// scale is the amount that tiles should be scaled down before being placed.  This value must be
+//	// carried through to weaver so tiles look correct in the final image.
+//}
+//
+//message Placement {
+//	string id = 1;
+//	string worker = 2;  // Worker ID may be indicated here.
+//	int64 x = 3;
+//	int64 y = 4;
+//	int64 dx = 5;
+//	int64 dy = 6;
+//	double scale = 7;  // Scale is redundant, but convenient.
+//	string error = 8;
+//}
+//

@@ -9,19 +9,20 @@ import (
 
 	"github.com/runningwild/jig"
 	"github.com/runningwild/jig/graph"
+	jpb "github.com/runningwild/jig/proto"
 	"github.com/runningwild/jig/testutils"
 )
 
 func main() {
 	r := testutils.MakeFakeRepo()
-	var commits []*graph.Commit
-	c0 := &graph.Commit{
+	var commits []*jpb.Commit
+	c0 := &jpb.Commit{
 		Deps: nil,
-		EdgeRefs: []graph.EdgeRef{
+		EdgeRefs: []*jpb.EdgeRef{
 			{
-				Src:     graph.NodeRef{Node: "src:sample.txt", Depth: 1},
-				Content: &graph.NewContent{Form: graph.FormText, Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "")},
-				Dst:     graph.NodeRef{Node: "snk:sample.txt", Depth: 0},
+				Src:     &jpb.NodeRef{Node: "src:sample.txt", Depth: 1},
+				Content: &jpb.NewContent{Form: jpb.Form_Text, Content: stringsToContent("a", "b", "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "y", "z", "")},
+				Dst:     &jpb.NodeRef{Node: "snk:sample.txt", Depth: 0},
 			},
 		},
 	}
@@ -35,51 +36,64 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if str := string(bytes.Join(data, []byte("."))); str != "alpha.bravo.charlie.delta.echo.foxtrot." {
-		panic(fmt.Sprintf("%q vs %q", str, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india."))
+	if str := string(bytes.Join(data, []byte("."))); str != "a.b.alpha.bravo.charlie.delta.echo.foxtrot.y.z." {
+		panic(fmt.Sprintf("%q vs %q", str, "a.b.alpha.bravo.charlie.delta.echo.foxtrot.y.z."))
 	}
 	fmt.Printf("*********************************************************************************************************\n")
 
-	c1 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.", ".")...))
-	c2 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.", ".")...))
-
-	for _, c := range []*graph.Commit{c1, c2} {
+	c1 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
+	c2 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
+	for _, c := range []*jpb.Commit{c1, c2} {
 		if err := graph.Apply(r, c); err != nil {
-			panic(fmt.Errorf("error applying %s: %v", c.Hash(), err))
+			panic(fmt.Errorf("error applying %s: %v", graph.HashCommit(c), err))
 		}
 	}
+	c3 := diffmachine(r, explicitFrontier(c0, c2), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.y.z.", ".")...))
+	for _, c := range []*jpb.Commit{c3} {
+		if err := graph.Apply(r, c); err != nil {
+			panic(fmt.Errorf("error applying %s: %v", graph.HashCommit(c), err))
+		}
+	}
+
 	lines, err := graph.ReadVersion(r, explicitFrontier(c0, c1), "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
 	if err != nil {
 		panic(fmt.Errorf("failed to read: %v", err))
 	}
-	fmt.Printf("%s\n", bytes.Join(lines, []byte{'.'}))
-	lines, err = graph.ReadVersion(r, explicitFrontier(c0, c2), "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
+	fmt.Printf("XXX: %s\n", bytes.Join(lines, []byte{'.'}))
+	lines, err = graph.ReadVersion(r, explicitFrontier(c0, c2, c3), "src:sample.txt", "snk:sample.txt", &graph.ReadMetadata{})
 	if err != nil {
 		panic(fmt.Errorf("failed to read: %v", err))
 	}
-	fmt.Printf("%s\n", bytes.Join(lines, []byte{'.'}))
+	fmt.Printf("XXX: %s\n", bytes.Join(lines, []byte{'.'}))
 
-	conflictsList, err := graph.FindConflicts(r, explicitFrontier(c0, c1, c2), "sample.txt")
+	conflictsList, err := graph.FindConflicts(r, explicitFrontier(c0, c1, c2, c3), "sample.txt")
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("Conflict list: %v\n", conflictsList)
 	conflictedCommits := make(map[string]bool)
 	for _, conflict := range conflictsList {
 		for commit := range conflict.Commits {
 			conflictedCommits[commit] = true
 		}
 	}
+
 	fmt.Printf("Conflicts: %v\n", conflictedCommits)
-	vs, err := graph.ReadVersions(r, explicitFrontier(c0, c1, c2), nil, "src:sample.txt", "snk:sample.txt", conflictedCommits, []byte("."))
+	vs, err := graph.ReadVersions(r, explicitFrontier(c0, c1, c2, c3), nil, "src:sample.txt", "snk:sample.txt", conflictedCommits, []byte("."))
 	if err != nil {
 		panic(err)
 	}
 	for _, v := range vs {
-		fmt.Printf("%s\n", v)
+		fmt.Printf("%v: %s\n", v.Commits, v.Data)
 	}
+	output, err := graph.HumanReadable(r, explicitFrontier(c0, c1, c2, c3), nil, "sample.txt", conflictsList, []byte{'\n'})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Output:\n%s\n", output)
 }
 
-func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *graph.Commit {
+func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *jpb.Commit {
 	var ranges []graph.ReadRange
 	lines0, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", path), fmt.Sprintf("snk:%s", path), &graph.ReadMetadata{Ranges: &ranges})
 	if err != nil {
@@ -122,15 +136,15 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	}
 	total := 0
 
-	var c graph.Commit
+	var c jpb.Commit
 
-	curEdge := &graph.EdgeRef{
-		Src: graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1},
+	curEdge := &jpb.EdgeRef{
+		Src: &jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1},
 	}
-	// prevMonkey = graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
+	// prevMonkey = jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
 	// prev := fmt.Sprintf("src:%s", path)
 	// prevSpec := refspec{src: true, index: 0}
-	// c.NodeRefs = append(c.NodeRefs, graph.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
+	// c.NodeRefs = append(c.NodeRefs, jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
 
 	// Loop over the common substrings, this will cover the whole file, though we might need to fill
 	// in gaps with new content.
@@ -140,7 +154,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// inserted here that we need to account for.
 		if cs.Bi > total {
 			fmt.Printf("New Content: %s\n", contentToString(lines1[total:cs.Bi]))
-			curEdge.Content = &graph.NewContent{Form: graph.FormText, Content: lines1[total:cs.Bi]}
+			curEdge.Content = &jpb.NewContent{Form: jpb.Form_Text, Content: lines1[total:cs.Bi]}
 		}
 
 		// The next one or more lines are copied from the source file.
@@ -160,7 +174,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		unused := cs.Ai - ranges[n].ReadDepth
 		fmt.Printf("Ai vs ReadDepth: %d vs %d\n", cs.Ai, ranges[n].ReadDepth)
 
-		curEdge.Dst = graph.NodeRef{Node: ranges[n].Node, Depth: unused + ranges[n].Depth}
+		curEdge.Dst = &jpb.NodeRef{Node: ranges[n].Node, Depth: int32(unused + ranges[n].Depth)}
 		fmt.Printf("Using src: %v\n", curEdge.Src)
 		fmt.Printf("Setting Dst: %v\n", curEdge.Dst)
 		fmt.Printf("Using range: %v\n", ranges[n])
@@ -169,9 +183,9 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 			fmt.Printf("skipping src:* edge because it already exists\n")
 		} else {
 			fmt.Printf("Inserting edge %d\n", len(c.EdgeRefs))
-			c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+			c.EdgeRefs = append(c.EdgeRefs, curEdge)
 		}
-		curEdge = &graph.EdgeRef{}
+		curEdge = &jpb.EdgeRef{}
 
 		fmt.Printf("--- Checking the next common substring: %q\n", lines1[cs.Bi:cs.Bi+cs.Length])
 		i := cs.Bi
@@ -187,7 +201,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 				fmt.Printf("Node %s @ %d:%d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, ranges[n].Depth+unused+used, string(bytes.Join(theseLines, []byte{'.'})))
 				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
 				fmt.Printf("%s\n", d)
-				curEdge.Src = graph.NodeRef{Node: ranges[n].Node, Depth: ranges[n].Depth + unused + used}
+				curEdge.Src = &jpb.NodeRef{Node: ranges[n].Node, Depth: int32(ranges[n].Depth + unused + used)}
 				fmt.Printf("  set src to %v, %d = %d + %d + %d\n", curEdge.Src, curEdge.Src.Depth, ranges[n].Depth, unused, used)
 			}
 			covered += used
@@ -207,13 +221,13 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	}
 	if total < len(lines1) {
 		fmt.Printf("New Content: %s\n", contentToString(lines1[total:]))
-		curEdge.Content = &graph.NewContent{Form: graph.FormText, Content: lines1[total:]}
+		curEdge.Content = &jpb.NewContent{Form: jpb.Form_Text, Content: lines1[total:]}
 	}
 	if cs := css[len(css)-1]; cs.Ai+cs.Length == len(lines0) && cs.Bi+cs.Length == len(lines1) {
 		fmt.Printf("skipping snk:* edge because it already exists\n")
 	} else {
-		curEdge.Dst = graph.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
-		c.EdgeRefs = append(c.EdgeRefs, *curEdge)
+		curEdge.Dst = &jpb.NodeRef{Node: fmt.Sprintf("snk:%s", path), Depth: 0}
+		c.EdgeRefs = append(c.EdgeRefs, curEdge)
 	}
 
 	// NEXT: need this to work with conflicts.  There are two major issues that need to be addressed:
@@ -273,10 +287,10 @@ type allFrontier struct{}
 
 func (allFrontier) Observes(string) bool { return true }
 
-func explicitFrontier(commits ...*graph.Commit) simpleFrontier {
+func explicitFrontier(commits ...*jpb.Commit) simpleFrontier {
 	s := make(simpleFrontier)
 	for _, c := range commits {
-		s[c.Hash()] = true
+		s[graph.HashCommit(c)] = true
 	}
 	return s
 }
