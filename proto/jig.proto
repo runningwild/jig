@@ -4,7 +4,16 @@ package jig;
 
 
 message Repo {
+	repeated Commit commits = 1;
+	repeated Edge edges = 2;
+	repeated Node nodes = 3;
+	repeated bytes contents = 4;
+	repeated Ref refs = 5;
+}
 
+message Ref {
+	string src = 1;
+	string dst = 2;
 }
 
 // Node contains POD.  All of the edge data is embedded so that they can be split when necessary.
@@ -21,23 +30,21 @@ message Node {
 	// inherit the value of Tail prior to the split.
 	string tail = 2;
 
-	Form form = 3;
+	oneof content {
+		Src src = 3;
+		Snk snk = 4;
+		string content_hash = 5;
+	}
+	//Form form = 3;
 
 	// Hash of the content, not the content itself.
-	string content = 4;
+	//string content = 4;
 
 	// Number of internal nodes represented by this Node.
-	int32 count = 5;
+	int32 count = 6;
 
-	repeated Edge in = 6;
-	repeated Edge out = 7;
-}
-
-enum Form {
-	Unknown = 0;
-	Src = 1;
-	Snk = 2;
-	Text = 3;
+	repeated Edge in = 7;
+	repeated Edge out = 8;
 }
 
 message Edge {
@@ -67,13 +74,11 @@ message EdgeRef {
 
 	// Content inserted between Src and Dst.  This can be nil, in which case the edge created by
 	// this EdgeRef connects Src directly to Dst.
-	NewContent content = 3;
+	repeated bytes chunks = 3;
 }
 
-message NewContent {
-	Form form = 1;
-	repeated bytes content = 2;
-}
+message Src {}
+message Snk {}
 
 message NodeRef {
 	// Typical hash of the node that this NodeRef refers to.  This may also refer to nodes that are
@@ -114,77 +119,5 @@ message NodeRef {
 //	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
 //	PutContent(content [][]byte) string
 //	DeleteContent(contentHash string)
-//}
-//
-//
-//message StartJobRequest {
-//	JobParams job_params = 1;
-//}
-//
-//message StartJobReply {
-//	int32 concurrent = 1;
-//}
-//
-//message TaskRequest {
-//	string id = 1;
-//	// id of the Job to sanity check that this is from the appropriate master.
-//
-//	Tile tile = 2;
-//}
-//
-//message TaskReply {
-//	Placement placement = 1;
-//}
-//
-//message StopJobRequest {
-//	string id = 1;
-//	// id of the job to stop.
-//}
-//
-//message StopJobReply {}
-//
-//
-//message PlaceTilesRequest {
-//	oneof request {
-//		JobParams params = 1;
-//		Tile tile = 2;
-//	}
-//}
-//
-//message JobParams {
-//	string id = 1;
-//	// id is used to indicate to a worker which job each RPC applies to.  Mostly this is used for
-//	// ensuring that different masters aren't stepping on each others' toes.
-//
-//	string primary_id = 2;
-//	// primary_id is the id of the primary image after being uploaded to the photostore.
-//
-//	bool greyscale = 3;
-//	// greyscale indicates that only the brightness of pixels matters.  Internally it will use the
-//	// first channel of the images, which for tiles will necessarily be the L from LAB color, but
-//	// for the primary will be the R from RGB, or however it is encoded.
-//
-//	double downsample = 4;
-//	// downsample affects only the resolution that Placer operates at, the primary image itself is
-//	// still considered to be the same size as specified in primary_data.
-//}
-//
-//message Tile {
-//	string id = 1;
-//
-//	double scale = 2;
-//	// scale is the amount that tiles should be scaled down before being placed.  This value must be
-//	// carried through to weaver so tiles look correct in the final image.
-//}
-//
-//message Placement {
-//	string id = 1;
-//	string worker = 2;  // Worker ID may be indicated here.
-//	int64 x = 3;
-//	int64 y = 4;
-//	int64 dx = 5;
-//	int64 dy = 6;
-//	double scale = 7;  // Scale is redundant, but convenient.
-//	string error = 8;
 //}
 //

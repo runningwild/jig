@@ -20,9 +20,9 @@ func main() {
 		Deps: nil,
 		EdgeRefs: []*jpb.EdgeRef{
 			{
-				Src:     &jpb.NodeRef{Node: "src:sample.txt", Depth: 1},
-				Content: &jpb.NewContent{Form: jpb.Form_Text, Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "")},
-				Dst:     &jpb.NodeRef{Node: "snk:sample.txt", Depth: 0},
+				Src:    &jpb.NodeRef{Node: "src:sample.txt", Depth: 1},
+				Chunks: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
+				Dst:    &jpb.NodeRef{Node: "snk:sample.txt", Depth: 0},
 			},
 		},
 	}
@@ -86,7 +86,7 @@ func main() {
 		for i, e := range c1.EdgeRefs {
 			fmt.Printf("Edge %d/%d\n", i, len(c1.EdgeRefs))
 			fmt.Printf("  Src: %v\n", e.Src)
-			fmt.Printf("  Con: %v\n", e.Content)
+			fmt.Printf("  Con: %v\n", e.Chunks)
 			fmt.Printf("  Dst: %v\n", e.Dst)
 		}
 
@@ -171,7 +171,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 		// inserted here that we need to account for.
 		if cs.Bi > total {
 			fmt.Printf("New Content: %s\n", contentToString(lines1[total:cs.Bi]))
-			curEdge.Content = &jpb.NewContent{Form: jpb.Form_Text, Content: lines1[total:cs.Bi]}
+			curEdge.Chunks = lines1[total:cs.Bi]
 		}
 
 		// The next one or more lines are copied from the source file.
@@ -214,7 +214,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 				used = ranges[n].Length - unused
 			}
 			{
-				theseLines := r.GetContent(r.GetNode(ranges[n].Node).Content)[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
+				theseLines := r.GetContent(r.GetNode(ranges[n].Node).GetContentHash())[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
 				fmt.Printf("Node %s @ %d:%d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, ranges[n].Depth+unused+used, string(bytes.Join(theseLines, []byte{'.'})))
 				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
 				fmt.Printf("%s\n", d)
@@ -238,7 +238,7 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	}
 	if total < len(lines1) {
 		fmt.Printf("New Content: %s\n", contentToString(lines1[total:]))
-		curEdge.Content = &jpb.NewContent{Form: jpb.Form_Text, Content: lines1[total:]}
+		curEdge.Chunks = lines1[total:]
 	}
 	if cs := css[len(css)-1]; cs.Ai+cs.Length == len(lines0) && cs.Bi+cs.Length == len(lines1) {
 		fmt.Printf("skipping snk:* edge because it already exists\n")

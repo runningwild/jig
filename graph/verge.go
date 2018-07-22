@@ -119,7 +119,7 @@ func nodeContent(r Repo, node string) string {
 		node = r
 	}
 	n := r.GetNode(node)
-	s := string(bytes.Join(r.GetContent(n.Content), []byte(".")))
+	s := string(bytes.Join(r.GetContent(n.GetContentHash()), []byte(".")))
 	return fmt.Sprintf("(%s) %s (%s)", n.Head, s, n.Tail)
 }
 

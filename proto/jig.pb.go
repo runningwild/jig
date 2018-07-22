@@ -9,11 +9,13 @@ It is generated from these files:
 
 It has these top-level messages:
 	Repo
+	Ref
 	Node
 	Edge
 	Commit
 	EdgeRef
-	NewContent
+	Src
+	Snk
 	NodeRef
 */
 package jig
@@ -33,40 +35,77 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
-type Form int32
-
-const (
-	Form_Unknown Form = 0
-	Form_Src     Form = 1
-	Form_Snk     Form = 2
-	Form_Text    Form = 3
-)
-
-var Form_name = map[int32]string{
-	0: "Unknown",
-	1: "Src",
-	2: "Snk",
-	3: "Text",
-}
-var Form_value = map[string]int32{
-	"Unknown": 0,
-	"Src":     1,
-	"Snk":     2,
-	"Text":    3,
-}
-
-func (x Form) String() string {
-	return proto.EnumName(Form_name, int32(x))
-}
-func (Form) EnumDescriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
-
 type Repo struct {
+	Commits  []*Commit `protobuf:"bytes,1,rep,name=commits" json:"commits,omitempty"`
+	Edges    []*Edge   `protobuf:"bytes,2,rep,name=edges" json:"edges,omitempty"`
+	Nodes    []*Node   `protobuf:"bytes,3,rep,name=nodes" json:"nodes,omitempty"`
+	Contents [][]byte  `protobuf:"bytes,4,rep,name=contents,proto3" json:"contents,omitempty"`
+	Refs     []*Ref    `protobuf:"bytes,5,rep,name=refs" json:"refs,omitempty"`
 }
 
 func (m *Repo) Reset()                    { *m = Repo{} }
 func (m *Repo) String() string            { return proto.CompactTextString(m) }
 func (*Repo) ProtoMessage()               {}
 func (*Repo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+
+func (m *Repo) GetCommits() []*Commit {
+	if m != nil {
+		return m.Commits
+	}
+	return nil
+}
+
+func (m *Repo) GetEdges() []*Edge {
+	if m != nil {
+		return m.Edges
+	}
+	return nil
+}
+
+func (m *Repo) GetNodes() []*Node {
+	if m != nil {
+		return m.Nodes
+	}
+	return nil
+}
+
+func (m *Repo) GetContents() [][]byte {
+	if m != nil {
+		return m.Contents
+	}
+	return nil
+}
+
+func (m *Repo) GetRefs() []*Ref {
+	if m != nil {
+		return m.Refs
+	}
+	return nil
+}
+
+type Ref struct {
+	Src string `protobuf:"bytes,1,opt,name=src" json:"src,omitempty"`
+	Dst string `protobuf:"bytes,2,opt,name=dst" json:"dst,omitempty"`
+}
+
+func (m *Ref) Reset()                    { *m = Ref{} }
+func (m *Ref) String() string            { return proto.CompactTextString(m) }
+func (*Ref) ProtoMessage()               {}
+func (*Ref) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+
+func (m *Ref) GetSrc() string {
+	if m != nil {
+		return m.Src
+	}
+	return ""
+}
+
+func (m *Ref) GetDst() string {
+	if m != nil {
+		return m.Dst
+	}
+	return ""
+}
 
 // Node contains POD.  All of the edge data is embedded so that they can be split when necessary.
 // When a Node splits, we get two nodes whose Form, Content, and Count are determined in the obvious
@@ -80,19 +119,46 @@ type Node struct {
 	// Head, otherwise any time this Node is split, the second Node created will implicitly
 	// inherit the value of Tail prior to the split.
 	Tail string `protobuf:"bytes,2,opt,name=tail" json:"tail,omitempty"`
-	Form Form   `protobuf:"varint,3,opt,name=form,enum=jig.Form" json:"form,omitempty"`
-	// Hash of the content, not the content itself.
-	Content string `protobuf:"bytes,4,opt,name=content" json:"content,omitempty"`
+	// Types that are valid to be assigned to Content:
+	//	*Node_Src
+	//	*Node_Snk
+	//	*Node_ContentHash
+	Content isNode_Content `protobuf_oneof:"content"`
 	// Number of internal nodes represented by this Node.
-	Count int32   `protobuf:"varint,5,opt,name=count" json:"count,omitempty"`
-	In    []*Edge `protobuf:"bytes,6,rep,name=in" json:"in,omitempty"`
-	Out   []*Edge `protobuf:"bytes,7,rep,name=out" json:"out,omitempty"`
+	Count int32   `protobuf:"varint,6,opt,name=count" json:"count,omitempty"`
+	In    []*Edge `protobuf:"bytes,7,rep,name=in" json:"in,omitempty"`
+	Out   []*Edge `protobuf:"bytes,8,rep,name=out" json:"out,omitempty"`
 }
 
 func (m *Node) Reset()                    { *m = Node{} }
 func (m *Node) String() string            { return proto.CompactTextString(m) }
 func (*Node) ProtoMessage()               {}
-func (*Node) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+func (*Node) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+
+type isNode_Content interface {
+	isNode_Content()
+}
+
+type Node_Src struct {
+	Src *Src `protobuf:"bytes,3,opt,name=src,oneof"`
+}
+type Node_Snk struct {
+	Snk *Snk `protobuf:"bytes,4,opt,name=snk,oneof"`
+}
+type Node_ContentHash struct {
+	ContentHash string `protobuf:"bytes,5,opt,name=content_hash,oneof"`
+}
+
+func (*Node_Src) isNode_Content()         {}
+func (*Node_Snk) isNode_Content()         {}
+func (*Node_ContentHash) isNode_Content() {}
+
+func (m *Node) GetContent() isNode_Content {
+	if m != nil {
+		return m.Content
+	}
+	return nil
+}
 
 func (m *Node) GetHead() string {
 	if m != nil {
@@ -108,16 +174,23 @@ func (m *Node) GetTail() string {
 	return ""
 }
 
-func (m *Node) GetForm() Form {
-	if m != nil {
-		return m.Form
+func (m *Node) GetSrc() *Src {
+	if x, ok := m.GetContent().(*Node_Src); ok {
+		return x.Src
 	}
-	return Form_Unknown
+	return nil
 }
 
-func (m *Node) GetContent() string {
-	if m != nil {
-		return m.Content
+func (m *Node) GetSnk() *Snk {
+	if x, ok := m.GetContent().(*Node_Snk); ok {
+		return x.Snk
+	}
+	return nil
+}
+
+func (m *Node) GetContentHash() string {
+	if x, ok := m.GetContent().(*Node_ContentHash); ok {
+		return x.ContentHash
 	}
 	return ""
 }
@@ -143,6 +216,95 @@ func (m *Node) GetOut() []*Edge {
 	return nil
 }
 
+// XXX_OneofFuncs is for the internal use of the proto package.
+func (*Node) XXX_OneofFuncs() (func(msg proto.Message, b *proto.Buffer) error, func(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error), func(msg proto.Message) (n int), []interface{}) {
+	return _Node_OneofMarshaler, _Node_OneofUnmarshaler, _Node_OneofSizer, []interface{}{
+		(*Node_Src)(nil),
+		(*Node_Snk)(nil),
+		(*Node_ContentHash)(nil),
+	}
+}
+
+func _Node_OneofMarshaler(msg proto.Message, b *proto.Buffer) error {
+	m := msg.(*Node)
+	// content
+	switch x := m.Content.(type) {
+	case *Node_Src:
+		b.EncodeVarint(3<<3 | proto.WireBytes)
+		if err := b.EncodeMessage(x.Src); err != nil {
+			return err
+		}
+	case *Node_Snk:
+		b.EncodeVarint(4<<3 | proto.WireBytes)
+		if err := b.EncodeMessage(x.Snk); err != nil {
+			return err
+		}
+	case *Node_ContentHash:
+		b.EncodeVarint(5<<3 | proto.WireBytes)
+		b.EncodeStringBytes(x.ContentHash)
+	case nil:
+	default:
+		return fmt.Errorf("Node.Content has unexpected type %T", x)
+	}
+	return nil
+}
+
+func _Node_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error) {
+	m := msg.(*Node)
+	switch tag {
+	case 3: // content.src
+		if wire != proto.WireBytes {
+			return true, proto.ErrInternalBadWireType
+		}
+		msg := new(Src)
+		err := b.DecodeMessage(msg)
+		m.Content = &Node_Src{msg}
+		return true, err
+	case 4: // content.snk
+		if wire != proto.WireBytes {
+			return true, proto.ErrInternalBadWireType
+		}
+		msg := new(Snk)
+		err := b.DecodeMessage(msg)
+		m.Content = &Node_Snk{msg}
+		return true, err
+	case 5: // content.content_hash
+		if wire != proto.WireBytes {
+			return true, proto.ErrInternalBadWireType
+		}
+		x, err := b.DecodeStringBytes()
+		m.Content = &Node_ContentHash{x}
+		return true, err
+	default:
+		return false, nil
+	}
+}
+
+func _Node_OneofSizer(msg proto.Message) (n int) {
+	m := msg.(*Node)
+	// content
+	switch x := m.Content.(type) {
+	case *Node_Src:
+		s := proto.Size(x.Src)
+		n += proto.SizeVarint(3<<3 | proto.WireBytes)
+		n += proto.SizeVarint(uint64(s))
+		n += s
+	case *Node_Snk:
+		s := proto.Size(x.Snk)
+		n += proto.SizeVarint(4<<3 | proto.WireBytes)
+		n += proto.SizeVarint(uint64(s))
+		n += s
+	case *Node_ContentHash:
+		n += proto.SizeVarint(5<<3 | proto.WireBytes)
+		n += proto.SizeVarint(uint64(len(x.ContentHash)))
+		n += len(x.ContentHash)
+	case nil:
+	default:
+		panic(fmt.Sprintf("proto: unexpected type %T in oneof", x))
+	}
+	return n
+}
+
 type Edge struct {
 	Commit string `protobuf:"bytes,1,opt,name=commit" json:"commit,omitempty"`
 	// There are two special values for output node hashes.
@@ -160,7 +322,7 @@ type Edge struct {
 func (m *Edge) Reset()                    { *m = Edge{} }
 func (m *Edge) String() string            { return proto.CompactTextString(m) }
 func (*Edge) ProtoMessage()               {}
-func (*Edge) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+func (*Edge) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
 
 func (m *Edge) GetCommit() string {
 	if m != nil {
@@ -191,7 +353,7 @@ type Commit struct {
 func (m *Commit) Reset()                    { *m = Commit{} }
 func (m *Commit) String() string            { return proto.CompactTextString(m) }
 func (*Commit) ProtoMessage()               {}
-func (*Commit) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+func (*Commit) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
 
 func (m *Commit) GetDeps() []string {
 	if m != nil {
@@ -212,13 +374,13 @@ type EdgeRef struct {
 	Dst *NodeRef `protobuf:"bytes,2,opt,name=dst" json:"dst,omitempty"`
 	// Content inserted between Src and Dst.  This can be nil, in which case the edge created by
 	// this EdgeRef connects Src directly to Dst.
-	Content *NewContent `protobuf:"bytes,3,opt,name=content" json:"content,omitempty"`
+	Chunks [][]byte `protobuf:"bytes,3,rep,name=chunks,proto3" json:"chunks,omitempty"`
 }
 
 func (m *EdgeRef) Reset()                    { *m = EdgeRef{} }
 func (m *EdgeRef) String() string            { return proto.CompactTextString(m) }
 func (*EdgeRef) ProtoMessage()               {}
-func (*EdgeRef) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+func (*EdgeRef) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
 
 func (m *EdgeRef) GetSrc() *NodeRef {
 	if m != nil {
@@ -234,36 +396,28 @@ func (m *EdgeRef) GetDst() *NodeRef {
 	return nil
 }
 
-func (m *EdgeRef) GetContent() *NewContent {
+func (m *EdgeRef) GetChunks() [][]byte {
 	if m != nil {
-		return m.Content
+		return m.Chunks
 	}
 	return nil
 }
 
-type NewContent struct {
-	Form    Form     `protobuf:"varint,1,opt,name=form,enum=jig.Form" json:"form,omitempty"`
-	Content [][]byte `protobuf:"bytes,2,rep,name=content,proto3" json:"content,omitempty"`
+type Src struct {
 }
 
-func (m *NewContent) Reset()                    { *m = NewContent{} }
-func (m *NewContent) String() string            { return proto.CompactTextString(m) }
-func (*NewContent) ProtoMessage()               {}
-func (*NewContent) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+func (m *Src) Reset()                    { *m = Src{} }
+func (m *Src) String() string            { return proto.CompactTextString(m) }
+func (*Src) ProtoMessage()               {}
+func (*Src) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
 
-func (m *NewContent) GetForm() Form {
-	if m != nil {
-		return m.Form
-	}
-	return Form_Unknown
+type Snk struct {
 }
 
-func (m *NewContent) GetContent() [][]byte {
-	if m != nil {
-		return m.Content
-	}
-	return nil
-}
+func (m *Snk) Reset()                    { *m = Snk{} }
+func (m *Snk) String() string            { return proto.CompactTextString(m) }
+func (*Snk) ProtoMessage()               {}
+func (*Snk) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
 
 type NodeRef struct {
 	// Typical hash of the node that this NodeRef refers to.  This may also refer to nodes that are
@@ -281,7 +435,7 @@ type NodeRef struct {
 func (m *NodeRef) Reset()                    { *m = NodeRef{} }
 func (m *NodeRef) String() string            { return proto.CompactTextString(m) }
 func (*NodeRef) ProtoMessage()               {}
-func (*NodeRef) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+func (*NodeRef) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
 
 func (m *NodeRef) GetNode() string {
 	if m != nil {
@@ -306,40 +460,43 @@ func (m *NodeRef) GetJoin() bool {
 
 func init() {
 	proto.RegisterType((*Repo)(nil), "jig.Repo")
+	proto.RegisterType((*Ref)(nil), "jig.Ref")
 	proto.RegisterType((*Node)(nil), "jig.Node")
 	proto.RegisterType((*Edge)(nil), "jig.Edge")
 	proto.RegisterType((*Commit)(nil), "jig.Commit")
 	proto.RegisterType((*EdgeRef)(nil), "jig.EdgeRef")
-	proto.RegisterType((*NewContent)(nil), "jig.NewContent")
+	proto.RegisterType((*Src)(nil), "jig.Src")
+	proto.RegisterType((*Snk)(nil), "jig.Snk")
 	proto.RegisterType((*NodeRef)(nil), "jig.NodeRef")
-	proto.RegisterEnum("jig.Form", Form_name, Form_value)
 }
 
 func init() { proto.RegisterFile("github.com/runningwild/jig/proto/jig.proto", fileDescriptor0) }
 
 var fileDescriptor0 = []byte{
-	// 357 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x7c, 0x52, 0xc1, 0x6e, 0xe2, 0x30,
-	0x10, 0x5d, 0xc7, 0x4e, 0x42, 0x86, 0x2c, 0x44, 0x96, 0x76, 0xd7, 0x7b, 0xda, 0x28, 0xa7, 0x88,
-	0x03, 0x91, 0xd8, 0xd5, 0xf6, 0x03, 0x50, 0x7b, 0xec, 0x81, 0xb6, 0xe7, 0x0a, 0x62, 0x13, 0x0c,
-	0xc4, 0x8e, 0x12, 0x47, 0xf4, 0x1b, 0xfa, 0xd5, 0x55, 0x4c, 0x02, 0x2a, 0x87, 0xde, 0xde, 0xcc,
-	0x1b, 0xcf, 0x7b, 0xf3, 0x64, 0x98, 0x15, 0xd2, 0xec, 0xda, 0xcd, 0x3c, 0xd7, 0x65, 0x56, 0xb7,
-	0x4a, 0x49, 0x55, 0x9c, 0xe4, 0x91, 0x67, 0x7b, 0x59, 0x64, 0x55, 0xad, 0x8d, 0xee, 0xd0, 0xdc,
-	0x22, 0x8a, 0xf7, 0xb2, 0x48, 0x3c, 0x20, 0x2b, 0x51, 0xe9, 0xe4, 0x1d, 0x01, 0x79, 0xd4, 0x5c,
-	0xd0, 0x10, 0xc8, 0x4e, 0xac, 0x39, 0x43, 0x31, 0x4a, 0x83, 0xae, 0x32, 0x6b, 0x79, 0x64, 0x8e,
-	0xad, 0x7e, 0x01, 0xd9, 0xea, 0xba, 0x64, 0x38, 0x46, 0xe9, 0x64, 0x11, 0xcc, 0xbb, 0x5d, 0x0f,
-	0xba, 0x2e, 0xe9, 0x14, 0xfc, 0x5c, 0x2b, 0x23, 0x94, 0x61, 0xc4, 0x4e, 0x7e, 0x07, 0x37, 0xd7,
-	0xad, 0x32, 0xcc, 0x8d, 0x51, 0xea, 0xd2, 0x1f, 0xe0, 0x48, 0xc5, 0xbc, 0x18, 0xa7, 0xe3, 0xfe,
-	0xd9, 0x3d, 0x2f, 0x04, 0xfd, 0x09, 0x58, 0xb7, 0x86, 0xf9, 0x37, 0xfd, 0x64, 0x01, 0xc4, 0xf2,
-	0x13, 0xf0, 0x72, 0x5d, 0x96, 0xd2, 0x5c, 0xdd, 0x28, 0xcd, 0x45, 0xef, 0x26, 0x04, 0xb2, 0xd7,
-	0x52, 0x59, 0x37, 0xa3, 0xe4, 0x0e, 0xbc, 0xa5, 0x9d, 0xed, 0xfa, 0x5c, 0x54, 0x0d, 0x43, 0x31,
-	0x4e, 0x03, 0xfa, 0x07, 0x02, 0xc1, 0x0b, 0xf1, 0x5a, 0x8b, 0x6d, 0xc3, 0x1c, 0xab, 0x14, 0x5e,
-	0x94, 0x56, 0x62, 0x9b, 0xac, 0xc1, 0xef, 0x21, 0xfd, 0x0d, 0xb8, 0xa9, 0x73, 0x2b, 0x36, 0x4c,
-	0x75, 0x99, 0xf4, 0x14, 0x6f, 0x8c, 0x55, 0xbe, 0xa5, 0xe2, 0xeb, 0xf1, 0xd8, 0xd2, 0xd3, 0x33,
-	0x2d, 0x4e, 0xcb, 0x73, 0x3b, 0xf9, 0x0f, 0x70, 0xad, 0x2e, 0x29, 0xa2, 0x2f, 0x52, 0xec, 0x8c,
-	0x86, 0xc9, 0x3f, 0xf0, 0x07, 0x91, 0xe1, 0x74, 0x34, 0xc4, 0xcb, 0x45, 0x65, 0x76, 0xd6, 0x8f,
-	0xfb, 0x39, 0x89, 0x59, 0x06, 0xc4, 0xae, 0x1b, 0x83, 0xff, 0xa2, 0x0e, 0x4a, 0x9f, 0x54, 0xf4,
-	0x8d, 0xfa, 0x80, 0x9f, 0xea, 0x3c, 0x42, 0x16, 0xa8, 0x43, 0xe4, 0xd0, 0x11, 0x90, 0x67, 0xf1,
-	0x66, 0x22, 0xbc, 0xf1, 0xec, 0x7f, 0xf8, 0xfb, 0x11, 0x00, 0x00, 0xff, 0xff, 0x10, 0xe5, 0xed,
-	0x82, 0x3d, 0x02, 0x00, 0x00,
+	// 400 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x5c, 0x92, 0xcf, 0x8a, 0xdb, 0x30,
+	0x10, 0xc6, 0xe3, 0x48, 0xf2, 0x9f, 0x89, 0xb6, 0x14, 0x41, 0x53, 0x15, 0x0a, 0x6b, 0x7c, 0x32,
+	0x3d, 0x24, 0xb0, 0x2d, 0xf4, 0xde, 0x52, 0xc8, 0xa9, 0x85, 0xec, 0x03, 0x2c, 0x59, 0x4b, 0xb1,
+	0x15, 0x6f, 0x24, 0x63, 0xc9, 0xf4, 0xde, 0x77, 0xea, 0xfb, 0x15, 0xc9, 0xf6, 0x26, 0xcd, 0xc9,
+	0x23, 0x7d, 0x9f, 0xc7, 0xdf, 0xfc, 0xc6, 0xf0, 0xa9, 0x56, 0xae, 0x19, 0x9e, 0x37, 0x95, 0x39,
+	0x6f, 0xfb, 0x41, 0x6b, 0xa5, 0xeb, 0xdf, 0xea, 0x45, 0x6c, 0x4f, 0xaa, 0xde, 0x76, 0xbd, 0x71,
+	0xc6, 0x57, 0x9b, 0x50, 0x31, 0x74, 0x52, 0x75, 0xf1, 0x27, 0x02, 0xbc, 0x97, 0x9d, 0x61, 0x1f,
+	0x21, 0xa9, 0xcc, 0xf9, 0xac, 0x9c, 0xe5, 0x51, 0x8e, 0xca, 0xd5, 0xc3, 0x6a, 0xe3, 0xad, 0xdf,
+	0xc3, 0x1d, 0xe3, 0x40, 0xa4, 0xa8, 0xa5, 0xe5, 0xcb, 0xa0, 0x65, 0x41, 0xfb, 0x21, 0x6a, 0xe9,
+	0x15, 0x6d, 0x84, 0xb4, 0x1c, 0x5d, 0x29, 0x3f, 0x8d, 0x90, 0xec, 0x2d, 0xa4, 0x95, 0xd1, 0x4e,
+	0x6a, 0x67, 0x39, 0xce, 0x51, 0x49, 0xd9, 0x1a, 0x70, 0x2f, 0x8f, 0x96, 0x93, 0x60, 0x4d, 0x83,
+	0x75, 0x2f, 0x8f, 0xc5, 0x3d, 0xa0, 0xbd, 0x3c, 0xb2, 0x15, 0x20, 0xdb, 0x57, 0x3c, 0xca, 0xa3,
+	0x32, 0xf3, 0x07, 0x61, 0x1d, 0x5f, 0xfa, 0x43, 0xf1, 0x37, 0x02, 0x1c, 0x7a, 0x52, 0xc0, 0x8d,
+	0x3c, 0x88, 0xc9, 0x43, 0x01, 0xbb, 0x83, 0x7a, 0x19, 0x4d, 0xec, 0xfd, 0xf8, 0x3a, 0xca, 0xa3,
+	0xd7, 0xe6, 0x8f, 0x7d, 0xb5, 0x5b, 0x04, 0x41, 0xb7, 0x1c, 0x5f, 0x0b, 0xba, 0xdd, 0x2d, 0xd8,
+	0x1a, 0xe8, 0x94, 0xf0, 0xa9, 0x39, 0xd8, 0x86, 0x13, 0xdf, 0x67, 0xb7, 0x60, 0x77, 0x40, 0x2a,
+	0x33, 0x68, 0xc7, 0xe3, 0x3c, 0x2a, 0x09, 0x7b, 0x07, 0x4b, 0xa5, 0x79, 0x72, 0x3b, 0xf9, 0x1a,
+	0x90, 0x19, 0x1c, 0x4f, 0x6f, 0xee, 0xbf, 0x65, 0x9e, 0x64, 0xe8, 0x5a, 0x3c, 0x00, 0x0e, 0xd6,
+	0x37, 0x10, 0x8f, 0x70, 0x2f, 0xc1, 0x3d, 0xb4, 0x29, 0x38, 0x05, 0x7c, 0x32, 0x4a, 0x87, 0xe4,
+	0x69, 0xf1, 0x15, 0xe2, 0x09, 0x3a, 0x05, 0x2c, 0x64, 0x37, 0xee, 0x23, 0x63, 0xf7, 0x90, 0xf9,
+	0x15, 0x3c, 0x05, 0x82, 0xe3, 0x1a, 0xe8, 0xeb, 0x47, 0x3d, 0xc5, 0x5f, 0x90, 0x4c, 0x25, 0xfb,
+	0x70, 0x21, 0x39, 0xbb, 0x3c, 0xbe, 0x49, 0x9a, 0xb9, 0xde, 0x4a, 0x3e, 0x65, 0x33, 0xe8, 0x76,
+	0xdc, 0x25, 0x2d, 0x08, 0xa0, 0xc7, 0xbe, 0x0a, 0x0f, 0xdd, 0x16, 0x5f, 0x20, 0x99, 0x8d, 0x73,
+	0xfc, 0x71, 0x98, 0x3b, 0x20, 0x42, 0x76, 0xae, 0x09, 0x3d, 0xc9, 0xff, 0xd3, 0x3c, 0xc7, 0xe1,
+	0x5f, 0xfb, 0xfc, 0x2f, 0x00, 0x00, 0xff, 0xff, 0x5e, 0x29, 0xab, 0x75, 0x99, 0x02, 0x00, 0x00,
 }

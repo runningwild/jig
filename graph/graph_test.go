@@ -26,18 +26,18 @@ func contentToString(content [][]byte) string {
 }
 
 func nodeContent(r graph.Repo, node string) string {
-	return contentToString(r.GetContent(r.GetNode(node).Content))
+	return contentToString(r.GetContent(r.GetNode(node).GetContentHash()))
 }
 
 func TestNodeHashes(t *testing.T) {
 	Convey("CalculateNodeHashes", t, func() {
 		c0 := stringsToContent("foo", "bar", "wing")
 		c1 := stringsToContent("ding", "monkey", "ball")
-		head, tail := graph.CalculateNodeHashes("commit", "prev", jpb.Form_Text, append(c0, c1...))
+		head, tail := graph.CalculateNodeHashes("commit", "prev", append(c0, c1...))
 		So(head, ShouldNotEqual, tail)
-		head2, middle := graph.CalculateNodeHashes("commit", "prev", jpb.Form_Text, c0)
+		head2, middle := graph.CalculateNodeHashes("commit", "prev", c0)
 		So(head2, ShouldEqual, head)
-		_, tail2 := graph.CalculateNodeHashes("commit", middle, jpb.Form_Text, c1)
+		_, tail2 := graph.CalculateNodeHashes("commit", middle, c1)
 		So(tail2, ShouldEqual, tail)
 	})
 }
@@ -47,12 +47,11 @@ func TestSplitNode(t *testing.T) {
 		r := testutils.MakeFakeRepo()
 		sampleContent := stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf")
 		contentHash := r.PutContent(sampleContent)
-		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", jpb.Form_Text, sampleContent)
+		head, tail := graph.CalculateNodeHashes("commit-0", "src:sample.txt", sampleContent)
 		r.PutNode(&jpb.Node{
 			Head:    head,
 			Tail:    tail,
-			Form:    jpb.Form_Text,
-			Content: contentHash,
+			Content: &jpb.Node_ContentHash{ContentHash: contentHash},
 			Count:   7,
 			In:      []*jpb.Edge{{Commit: "commit-0", Node: "src:sample.txt", Join: true}},
 			Out:     []*jpb.Edge{{Commit: "commit-0", Node: "snk:sample.txt", Join: true}},
@@ -115,10 +114,7 @@ func TestCommits(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"),
-					},
+					Chunks: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
@@ -143,7 +139,7 @@ func TestCommits(t *testing.T) {
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1,
@@ -166,10 +162,7 @@ func TestCommits(t *testing.T) {
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("ALPHA"),
-						},
+						Chunks: stringsToContent("ALPHA"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1, // bravo
@@ -192,7 +185,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
@@ -215,10 +208,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("GOLF"),
-						},
+						Chunks: stringsToContent("GOLF"),
 						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
@@ -241,7 +231,7 @@ func TestCommits(t *testing.T) {
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 1, // bravo
@@ -252,7 +242,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 4, // delta
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 0, // alpha
@@ -263,7 +253,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 1, // alpha
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // echo
@@ -286,7 +276,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 3, // charlie
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6, // golf
@@ -297,7 +287,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 7, // golf
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
@@ -308,7 +298,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 6, // foxtrot
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
@@ -331,7 +321,7 @@ func TestCommits(t *testing.T) {
 							Node:  "src:foo.txt",
 							Depth: 1,
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 2, // charlie
@@ -342,7 +332,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 4, // delta
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 0, // alpha
@@ -353,7 +343,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 2, // bravo
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4, // echo
@@ -376,7 +366,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 3, // charlie
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 5, // foxtrot
@@ -387,7 +377,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 7, // golf
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
@@ -398,7 +388,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 5, // echo
 						},
-						Content: nil,
+						Chunks: nil,
 						Dst: &jpb.NodeRef{
 							Node:  "snk:foo.txt",
 							Depth: 0,
@@ -421,10 +411,7 @@ func TestCommits(t *testing.T) {
 							Node:  head,
 							Depth: 3, // charlie
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("thunder", "buttons"),
-						},
+						Chunks: stringsToContent("thunder", "buttons"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3, // delta
@@ -462,7 +449,7 @@ func TestCommits(t *testing.T) {
 								Node:  head,
 								Depth: 2, // bravo
 							},
-							Content: nil,
+							Chunks: nil,
 							Dst: &jpb.NodeRef{
 								Node:  relevant[0].Node,
 								Depth: 0,
@@ -490,10 +477,7 @@ func TestVerge(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
-					},
+					Chunks: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", ""),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
@@ -515,10 +499,7 @@ func TestVerge(t *testing.T) {
 						Node:  head,
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT"),
-					},
+					Chunks: stringsToContent("CHARLIE", "DELTA", "ECHO", "FOXTROT"),
 					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 6,
@@ -537,10 +518,7 @@ func TestVerge(t *testing.T) {
 						Node:  head,
 						Depth: 4,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("buttons", "the", "buttonsball"),
-					},
+					Chunks: stringsToContent("buttons", "the", "buttonsball"),
 					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
@@ -559,10 +537,7 @@ func TestVerge(t *testing.T) {
 						Node:  head,
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("all", "your", "base", "are", "belong", "to", "us"),
-					},
+					Chunks: stringsToContent("all", "your", "base", "are", "belong", "to", "us"),
 					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 9,
@@ -652,10 +627,7 @@ func TestVerge(t *testing.T) {
 							Node:  head,
 							Depth: 4,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("BUTTONS", "THE", "BUTTONSBALL"),
-						},
+						Chunks: stringsToContent("BUTTONS", "THE", "BUTTONSBALL"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
@@ -707,10 +679,7 @@ func TestVerge(t *testing.T) {
 							Node:  head,
 							Depth: 1,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("BRAVO", "CHARLIE"),
-						},
+						Chunks: stringsToContent("BRAVO", "CHARLIE"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 3,
@@ -729,10 +698,7 @@ func TestVerge(t *testing.T) {
 							Node:  head,
 							Depth: 4,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("ECHO", "FOXTROT"),
-						},
+						Chunks: stringsToContent("ECHO", "FOXTROT"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6,
@@ -751,10 +717,7 @@ func TestVerge(t *testing.T) {
 							Node:  head,
 							Depth: 1,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("brAvO", "chArlIE", "dEltA"),
-						},
+						Chunks: stringsToContent("brAvO", "chArlIE", "dEltA"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 4,
@@ -773,10 +736,7 @@ func TestVerge(t *testing.T) {
 							Node:  head,
 							Depth: 5,
 						},
-						Content: &jpb.NewContent{
-							Form:    jpb.Form_Text,
-							Content: stringsToContent("fOxtrOt"),
-						},
+						Chunks: stringsToContent("fOxtrOt"),
 						Dst: &jpb.NodeRef{
 							Node:  head,
 							Depth: 6,
@@ -808,10 +768,10 @@ func TestVerge(t *testing.T) {
 					fmt.Printf("%v\n", v)
 				}
 				end, _ = v.AdvanceUntilConverged()
-				cont := r.GetContent(r.GetNode(end).Content)
+				cont := r.GetContent(r.GetNode(end).GetContentHash())
 				So(string(cont[0]), ShouldEqual, "golf")
 				start, conflicts = v.RetractUntilConverged()
-				cont = r.GetContent(r.GetNode(r.GetRef(start)).Content)
+				cont = r.GetContent(r.GetNode(r.GetRef(start)).GetContentHash())
 				So(string(cont[len(cont)-1]), ShouldEqual, "alpha")
 				for c := range conflicts {
 					conflictsList = append(conflictsList, c)
@@ -825,10 +785,10 @@ func TestVerge(t *testing.T) {
 				}
 				start, _ = v.RetractUntilConverged()
 				startRef := r.GetRef(start)
-				cont := r.GetContent(r.GetNode(startRef).Content)
+				cont := r.GetContent(r.GetNode(startRef).GetContentHash())
 				So(string(cont[0]), ShouldEqual, "alpha")
 				end, conflicts = v.AdvanceUntilConverged()
-				cont = r.GetContent(r.GetNode(end).Content)
+				cont = r.GetContent(r.GetNode(end).GetContentHash())
 				So(string(cont[len(cont)-1]), ShouldEqual, "golf")
 				for c := range conflicts {
 					conflictsList = append(conflictsList, c)
@@ -886,10 +846,7 @@ func TestSplitNodeProperties(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
-					},
+					Chunks: stringsToContent("alpha", "bravo", "charlie", "delta", "echo"),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
@@ -907,10 +864,7 @@ func TestSplitNodeProperties(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("brAvO", "chArlIE", "dEltA"),
-					},
+					Chunks: stringsToContent("brAvO", "chArlIE", "dEltA"),
 					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
@@ -929,10 +883,7 @@ func TestSplitNodeProperties(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("BRaVo", "CHaRLie", "DeLTa"),
-					},
+					Chunks: stringsToContent("BRaVo", "CHaRLie", "DeLTa"),
 					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
@@ -955,10 +906,7 @@ func TestSplitNodeProperties(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
-					},
+					Chunks: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
 					Dst: &jpb.NodeRef{
 						Node:  "src:foo.txt",
 						Depth: 5,
@@ -1023,10 +971,7 @@ func TestSplitNodeProperties(t *testing.T) {
 						Node:  n,
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("i do not belong here"),
-					},
+					Chunks: stringsToContent("i do not belong here"),
 					Dst: &jpb.NodeRef{
 						Node:  n,
 						Depth: 2,
@@ -1056,10 +1001,7 @@ func TestReadVersions(t *testing.T) {
 						Node:  "src:foo.txt",
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"),
-					},
+					Chunks: stringsToContent("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
@@ -1084,10 +1026,7 @@ func TestReadVersions(t *testing.T) {
 						Node:  head,
 						Depth: 1,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
-					},
+					Chunks: stringsToContent("BRAVO", "CHARLIE", "DELTA"),
 					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 4,
@@ -1108,10 +1047,7 @@ func TestReadVersions(t *testing.T) {
 						Node:  head,
 						Depth: 2,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("CHARLIE", "DELTA", "ECHO"),
-					},
+					Chunks: stringsToContent("CHARLIE", "DELTA", "ECHO"),
 					Dst: &jpb.NodeRef{
 						Node:  head,
 						Depth: 5,
@@ -1132,10 +1068,7 @@ func TestReadVersions(t *testing.T) {
 						Node:  head,
 						Depth: 9,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("JULIET"),
-					},
+					Chunks: stringsToContent("JULIET"),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
@@ -1155,10 +1088,7 @@ func TestReadVersions(t *testing.T) {
 						Node:  head,
 						Depth: 8,
 					},
-					Content: &jpb.NewContent{
-						Form:    jpb.Form_Text,
-						Content: stringsToContent("INDIA"),
-					},
+					Chunks: stringsToContent("INDIA"),
 					Dst: &jpb.NodeRef{
 						Node: "snk:foo.txt",
 					},
