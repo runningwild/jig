@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -13,8 +15,19 @@ import (
 	"github.com/runningwild/jig/testutils"
 )
 
+var (
+	dir = flag.String("dir", "", "directory to use for repo storage, empty to use an in-memory repo")
+)
+
 func main() {
-	r := testutils.MakeFakeRepo()
+	flag.Parse()
+	var r graph.Repo
+	if *dir == "" {
+		r = testutils.MakeFakeRepo()
+	} else {
+		os.RemoveAll(*dir)
+		r = testutils.MakeFileRepo(*dir)
+	}
 	var commits []*jpb.Commit
 	c0 := &jpb.Commit{
 		Deps: nil,
@@ -158,10 +171,6 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	curEdge := &jpb.EdgeRef{
 		Src: &jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1},
 	}
-	// prevMonkey = jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
-	// prev := fmt.Sprintf("src:%s", path)
-	// prevSpec := refspec{src: true, index: 0}
-	// c.NodeRefs = append(c.NodeRefs, jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
 
 	// Loop over the common substrings, this will cover the whole file, though we might need to fill
 	// in gaps with new content.
@@ -214,7 +223,16 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 				used = ranges[n].Length - unused
 			}
 			{
-				theseLines := r.GetContent(r.GetNode(ranges[n].Node).GetContentHash())[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
+				theContent := r.GetContent(r.GetNode(ranges[n].Node).GetContentHash())
+				fmt.Printf("Content for %s: %d - %s\n", r.GetNode(ranges[n].Node).GetContentHash(), len(theContent), theContent)
+				fmt.Printf("Node: %v\n", r.GetNode(ranges[n].Node))
+				fmt.Printf("Ranges: %v\n", ranges[n])
+				fmt.Printf("Unused: %v %v\n", unused, used)
+				fmt.Printf("All Ranges: %v\n", ranges)
+				rangeN := ranges[n]
+				fmt.Printf("Indexing into %d/%d with %d and %d\n", len(theContent), cap(theContent), rangeN.Depth+unused, rangeN.Depth+unused+used)
+				theseLines := graph.GetContent(r, ranges[n].Node, rangeN.Depth+unused, rangeN.Depth+unused+used)
+				//theseLines := theContent[rangeN.Depth+unused : rangeN.Depth+unused+used]
 				fmt.Printf("Node %s @ %d:%d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, ranges[n].Depth+unused+used, string(bytes.Join(theseLines, []byte{'.'})))
 				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
 				fmt.Printf("%s\n", d)

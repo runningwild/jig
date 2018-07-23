@@ -95,6 +95,11 @@ message NodeRef {
 	bool join = 3;
 }
 
+// Useful for storing to disk and pretty much nothing else
+message StoredContent {
+	repeated bytes content = 1;
+}
+
 //
 //type Repo interface {
 //	GetRef(ptr string) string

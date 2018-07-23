@@ -377,6 +377,21 @@ func nodeRef(r Repo, n *jpb.Node) (string, int) {
 	return ref, d + int(prev.Count)
 }
 
+// GetContent reads the content from the specified between depths specified by start and end.  This
+// will follow primary edges to do so, and so is the appropriate way to read content specified by ReadRanges.
+func GetContent(r Repo, nodeHash string, start, end int) [][]byte {
+	n := r.GetNode(nodeHash)
+	count := int(n.Count)
+	if count < start {
+		return GetContent(r, n.Out[0].Node, start-count, end-count)
+	}
+	content := r.GetContent(n.GetContentHash())
+	if end <= count {
+		return content[start:end]
+	}
+	return append(content[start:], GetContent(r, n.Out[0].Node, 0, end-(count-start))...)
+}
+
 type ReadMetadata struct {
 	// If non-nil this will be filled with all commits touched between start and end.  Reads the
 	// data between start and end, including the last chunk of start, if any, and the first chunk
