@@ -475,7 +475,7 @@ func findConflicts(v *Verge) ([]Conflict, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append([]Conflict{Conflict{start, end, commits}}, conflicts...), nil
+	return append([]Conflict{Conflict{Start: start, End: end, Commits: commits}}, conflicts...), nil
 }
 
 func commitSetToListList(r Repo, set map[string]bool) [][]string {
@@ -483,16 +483,113 @@ func commitSetToListList(r Repo, set map[string]bool) [][]string {
 }
 
 func FindConflicts(r Repo, f Frontier, path string) ([]Conflict, error) {
-	return findConflicts(MakeVerge(r, f, path))
+	cs, err := findConflicts(MakeVerge(r, f, path))
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range cs {
+		if err := cs[i].computeGroups(r); err != nil {
+			return nil, fmt.Errorf("error compute conflicts: %v", err)
+		}
+	}
+
+	return cs, nil
+}
+
+func (c *Conflict) computeGroups(r Repo) error {
+	var commitHashes []string
+	for commitHash := range c.Commits {
+		commitHashes = append(commitHashes, commitHash)
+	}
+	sort.Strings(commitHashes)
+	reverse := make(map[string]int)
+	for i, commitHash := range commitHashes {
+		reverse[commitHash] = i
+	}
+
+	var relDeps [][]string
+	for _, commitHash := range commitHashes {
+		commit := r.GetCommit(commitHash)
+		if commit == nil {
+			return fmt.Errorf("failed to get commit %q", commitHash)
+		}
+		var relDep []string
+		for _, dep := range commit.Deps {
+			if _, ok := c.Commits[dep]; ok {
+				relDep = append(relDep, dep)
+			}
+		}
+		sort.Strings(relDep) // should already be sorted but whatever
+		relDeps = append(relDeps, relDep)
+	}
+	relDepsInts := make([][]int, len(relDeps))
+	for i := range relDeps {
+		for j := range relDeps[i] {
+			relDepsInts[i] = append(relDepsInts[i], reverse[relDeps[i][j]])
+		}
+	}
+
+	// tcs[i] will represent the transitive closure of commits in c.Commits that commit[i] depends on.
+	// tcs[i] will be nil if it hasn't been filled out yet, and a non-nil, empty slice if it has.
+	tcs := make([][]int, len(commitHashes))
+	necks := make([]bool, len(tcs))
+	fmt.Printf("Compute TC for %v\n", relDepsInts)
+	for i := range tcs {
+		computeTC(i, relDepsInts, tcs)
+		for j := range tcs[i] {
+			necks[tcs[i][j]] = true
+		}
+	}
+	fmt.Printf("Computed TCs: %v\n", tcs)
+	fmt.Printf("Computed Necks: %v\n", necks)
+	c.Groups = nil
+	for i := range necks {
+		if necks[i] {
+			continue
+		}
+		group := make([]string, len(tcs[i]))
+		for j := range tcs[i] {
+			group[j] = commitHashes[tcs[i][j]]
+		}
+		group = append(group, commitHashes[i])
+		sort.Strings(group)
+		c.Groups = append(c.Groups, group)
+	}
+	fmt.Printf("Computed Groups: %v\n", c.Groups)
+	return nil
+}
+
+func computeTC(index int, deps [][]int, tcs [][]int) {
+	if tcs[index] != nil {
+		return
+	}
+	cover := make([]bool, len(deps))
+	for _, dep := range deps[index] {
+		cover[dep] = true
+	}
+	for _, dep := range deps[index] {
+		computeTC(dep, deps, tcs)
+		for _, c := range tcs[dep] {
+			cover[c] = true
+		}
+	}
+	var tc []int
+	for i, c := range cover {
+		if c {
+			tc = append(tc, i)
+		}
+	}
+	tcs[index] = tc
 }
 
 // NEXT: The Commits field needs to be changed to handle the fact that A,B can conflict with C, but
 // A and B don't conflict with eachother.  It should be sufficient to just group together chains of commits.
 // Oddly enough I think Union Find is the best way to do this.
 type Conflict struct {
-	Start string
-	End   string
-	//Groups  [][]string // each element is a list of commits that agree on one version of the conflict
+	Start   string
+	End     string
+	Groups  [][]string // each element is a list of commits that agree on one version of the conflict
 	Commits map[string]bool
 }
 

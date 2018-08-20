@@ -15,6 +15,7 @@ type Repo interface {
 	GetNode(nodeHash string) *jpb.Node
 	GetContent(contentHash string) [][]byte
 	GetCommit(commitHash string) *jpb.Commit
+	GetReverseDeps(commitHash string) []string
 
 	// List methods all fill out the given slice with as many hashes as possible of the specified,
 	// it returns the number of elements filled.
@@ -25,14 +26,25 @@ type Repo interface {
 
 	StartTransaction()
 	EndTransaction() error
+
 	PutRef(ptr, val string)
+
 	PutNode(n *jpb.Node)
-	PutCommit(c *jpb.Commit)
 	DeleteNode(nodeHash string)
 
 	// TODO: Need to decide how to handle multiple references to a single content.  GC or reference counting?
 	PutContent(content [][]byte) string
 	DeleteContent(contentHash string)
+
+	PutCommit(c *jpb.Commit)
+
+	PutReverseDep(newCommit, oldCommit string)
+	DeleteReverseDep(newCommit, oldCommit string)
+
+	// TODO: Need some kind of first-class handling of frontiers.  Perhaps something like this:
+	// CreateFrontier(commits []string) string  // creates a frontier out of commits and returns the ID
+	// DeltaSet(from, to string) string // given two frontiers, returns an ID for a set representing all
+	//									// commits in to that are not in from.
 }
 
 // SplitNode takes a node and a depth and replaces that node with two nodes, split at the specified
@@ -179,7 +191,8 @@ func HumanReadable(r Repo, f, prev Frontier, path string, conflicts []Conflict, 
 			// We have to display a conflict here.
 			lines = lines[0 : len(lines)-1]
 			con := conflicts[ci]
-			vs, err := ReadVersions(r, f, prev, con.Start, con.End, con.Commits, join)
+			fmt.Printf("ReadVersions with conflicts: %v\n", con.Commits)
+			vs, err := ReadVersions(r, f, prev, con.Start, con.End, conflicts[ci].Groups, join)
 			if err != nil {
 				return nil, err
 			}
@@ -217,37 +230,51 @@ func HumanReadable(r Repo, f, prev Frontier, path string, conflicts []Conflict, 
 // Versions will contain a single conflicting commit.
 // TODO: The restriction below should be verified.
 // If prev is set it must be a frontier at which there is no conflict between start and end.
-func ReadVersions(r Repo, f, prev Frontier, start, end string, conflicts map[string]bool, join []byte) ([]Version, error) {
-	var versions []Version
-	used := make(map[string]bool)
-	if prev != nil {
-		allCommits := make(map[string]bool)
-		lines, err := ReadVersion(r, prev, start, end, &ReadMetadata{Commits: allCommits})
-		if err != nil {
-			return nil, err
+func ReadVersions(r Repo, f, prev Frontier, start, end string, groups [][]string, join []byte) ([]Version, error) {
+	allCommits := make(map[string]bool)
+	var groupMaps []map[string]bool
+	for i := range groups {
+		groupMap := make(map[string]bool)
+		for j := range groups[i] {
+			groupMap[groups[i][j]] = true
+			allCommits[groups[i][j]] = true
 		}
-		data := bytes.Join(lines, join)
-		commits := make(map[string]bool)
-		for c := range allCommits {
-			if _, ok := conflicts[c]; ok {
-				commits[c] = true
-			}
-		}
-		versions = append(versions, Version{Commits: commits, Data: data})
-		used = commits
-	}
+		groupMaps = append(groupMaps, groupMap)
 
-	for c := range conflicts {
-		if used[c] {
-			continue
-		}
-		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: conflicts}, add: map[string]bool{c: true}}
+	}
+	var versions []Version
+	// used := make(map[string]bool)
+
+	// TODO: Figure out how this works with prev
+	// if prev != nil {
+	// 	allCommits := make(map[string]bool)
+	// 	lines, err := ReadVersion(r, prev, start, end, &ReadMetadata{Commits: allCommits})
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	data := bytes.Join(lines, join)
+	// 	commits := make(map[string]bool)
+	// 	for c := range allCommits {
+	// 		if _, ok := conflicts[c]; ok {
+	// 			commits[c] = true
+	// 		}
+	// 	}
+	// 	versions = append(versions, Version{Commits: commits, Data: data})
+	// 	used = commits
+	// }
+
+	// TODO: The way we're constructing the frontier here is a bit strange and I think it's not correct.
+	for _, groupMap := range groupMaps {
+		// if used[c] {
+		// 	continue
+		// }
+		next := &addToFrontier{f: &removeFromFrontier{f: f, remove: allCommits}, add: groupMap}
 		lines, err := ReadVersion(r, next, start, end, &ReadMetadata{})
 		if err != nil {
 			return nil, err
 		}
 		data := bytes.Join(lines, join)
-		versions = append(versions, Version{Commits: map[string]bool{c: true}, Data: data})
+		versions = append(versions, Version{Commits: groupMap, Data: data})
 	}
 	return versions, nil
 }
@@ -380,6 +407,7 @@ func nodeRef(r Repo, n *jpb.Node) (string, int) {
 // GetContent reads the content from the specified between depths specified by start and end.  This
 // will follow primary edges to do so, and so is the appropriate way to read content specified by ReadRanges.
 func GetContent(r Repo, nodeHash string, start, end int) [][]byte {
+	fmt.Printf("GetContent(node:%s, content:%s): %d,%d\n", nodeHash, r.GetNode(nodeHash).GetContentHash(), start, end)
 	n := r.GetNode(nodeHash)
 	count := int(n.Count)
 	if count < start {
@@ -389,7 +417,7 @@ func GetContent(r Repo, nodeHash string, start, end int) [][]byte {
 	if end <= count {
 		return content[start:end]
 	}
-	return append(content[start:], GetContent(r, n.Out[0].Node, 0, end-(count-start))...)
+	return append(content[start:], GetContent(r, n.Out[0].Node, 0, end-count)...)
 }
 
 type ReadMetadata struct {
@@ -555,6 +583,10 @@ func Apply(r Repo, c *jpb.Commit) error {
 		dst.In = append(dst.In, &jpb.Edge{Commit: commitHash, Node: middle.Tail})
 		r.PutNode(src)
 		r.PutNode(dst)
+	}
+
+	for _, dep := range c.Deps {
+		r.PutReverseDep(commitHash, dep)
 	}
 
 	r.PutCommit(c)

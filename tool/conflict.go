@@ -54,14 +54,15 @@ func main() {
 	}
 	fmt.Printf("*********************************************************************************************************\n")
 
-	c1 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
-	c2 := diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
+	c1 := Diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
+	c2 := Diffmachine(r, explicitFrontier(c0), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.echo.foxtrot.y.z.", ".")...))
 	for _, c := range []*jpb.Commit{c1, c2} {
 		if err := graph.Apply(r, c); err != nil {
 			panic(fmt.Errorf("error applying %s: %v", graph.HashCommit(c), err))
 		}
 	}
-	c3 := diffmachine(r, explicitFrontier(c0, c2), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.y.z.", ".")...))
+	c3 := Diffmachine(r, explicitFrontier(c0, c2), "sample.txt", stringsToContent(strings.Split("a.b.alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot.y.z.", ".")...))
+	fmt.Printf("Commit c3(%s) depends on %v\n", graph.HashCommit(c3), c3.Deps)
 	for _, c := range []*jpb.Commit{c3} {
 		if err := graph.Apply(r, c); err != nil {
 			panic(fmt.Errorf("error applying %s: %v", graph.HashCommit(c), err))
@@ -92,13 +93,13 @@ func main() {
 	}
 
 	fmt.Printf("Conflicts: %v\n", conflictedCommits)
-	vs, err := graph.ReadVersions(r, explicitFrontier(c0, c1, c2, c3), nil, "src:sample.txt", "snk:sample.txt", conflictedCommits, []byte("."))
-	if err != nil {
-		panic(err)
-	}
-	for _, v := range vs {
-		fmt.Printf("%v: %s\n", v.Commits, v.Data)
-	}
+	// vs, err := graph.ReadVersions(r, explicitFrontier(c0, c1, c2, c3), nil, "src:sample.txt", "snk:sample.txt", conflictedCommits, []byte("."))
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// for _, v := range vs {
+	// 	fmt.Printf("%v: %s\n", v.Commits, v.Data)
+	// }
 	output, err := graph.HumanReadable(r, explicitFrontier(c0, c1, c2, c3), nil, "sample.txt", conflictsList, []byte{'\n'})
 	if err != nil {
 		panic(err)
@@ -106,7 +107,7 @@ func main() {
 	fmt.Printf("Output:\n%s\n", output)
 }
 
-func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *jpb.Commit {
+func Diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *jpb.Commit {
 	var ranges []graph.ReadRange
 	lines0, err := graph.ReadVersion(r, f, fmt.Sprintf("src:%s", path), fmt.Sprintf("snk:%s", path), &graph.ReadMetadata{Ranges: &ranges})
 	if err != nil {
@@ -154,10 +155,6 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 	curEdge := &jpb.EdgeRef{
 		Src: &jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1},
 	}
-	// prevMonkey = jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1}
-	// prev := fmt.Sprintf("src:%s", path)
-	// prevSpec := refspec{src: true, index: 0}
-	// c.NodeRefs = append(c.NodeRefs, jpb.NodeRef{Node: fmt.Sprintf("src:%s", path), Depth: 1})
 
 	// Loop over the common substrings, this will cover the whole file, though we might need to fill
 	// in gaps with new content.
@@ -210,9 +207,16 @@ func diffmachine(r graph.Repo, f graph.Frontier, path string, lines1 [][]byte) *
 				used = ranges[n].Length - unused
 			}
 			{
-				// NEXT: The fake repo was exposing more content than expected because it was slicing a larger
-				// slice.  We made assumptions about that in there that need to be corrected.
-				theseLines := r.GetContent(r.GetNode(ranges[n].Node).GetContentHash())[ranges[n].Depth+unused : ranges[n].Depth+unused+used]
+				theContent := r.GetContent(r.GetNode(ranges[n].Node).GetContentHash())
+				fmt.Printf("Content for %s: %d - %s\n", r.GetNode(ranges[n].Node).GetContentHash(), len(theContent), theContent)
+				fmt.Printf("Node: %v\n", r.GetNode(ranges[n].Node))
+				fmt.Printf("Ranges: %v\n", ranges[n])
+				fmt.Printf("Unused: %v %v\n", unused, used)
+				fmt.Printf("All Ranges: %v\n", ranges)
+				rangeN := ranges[n]
+				fmt.Printf("Indexing into %d/%d with %d and %d\n", len(theContent), cap(theContent), rangeN.Depth+unused, rangeN.Depth+unused+used)
+				theseLines := graph.GetContent(r, ranges[n].Node, rangeN.Depth+unused, rangeN.Depth+unused+used)
+				//theseLines := theContent[rangeN.Depth+unused : rangeN.Depth+unused+used]
 				fmt.Printf("Node %s @ %d:%d -> %q\n", ranges[n].Node, ranges[n].Depth+unused, ranges[n].Depth+unused+used, string(bytes.Join(theseLines, []byte{'.'})))
 				d, _ := json.MarshalIndent(ranges[n], "  ", "  ")
 				fmt.Printf("%s\n", d)
