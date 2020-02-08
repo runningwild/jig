@@ -47,6 +47,16 @@ type Repo interface {
 	//									// commits in to that are not in from.
 }
 
+// A View represents an individual user's view of the repo
+type View interface {
+	ListFrontiers(start string, frontiers []string) (n int, err error)
+	GetFrontier(frontier string) (Frontier, error)
+	CurrentFrontier() (string, error)
+	ChangeFrontiers(frontier string) error
+	AdvanceFrontier(commit string) error
+	CreateFrontier(frontier string) error
+}
+
 // SplitNode takes a node and a depth and replaces that node with two nodes, split at the specified
 // depth.  The first of those nodes will have the same Head hash, and the second will have the same
 // Tail hash.  This function will return the Tail hash of the first node and the Head hash of the second.
@@ -212,7 +222,11 @@ func HumanReadable(r Repo, f, prev Frontier, path string, conflicts []Conflict, 
 		fmt.Printf("Content(%s): %s\n", next.Head, r.GetContent(next.GetContentHash()))
 		var edge *jpb.Edge
 		for i := len(next.Out) - 1; i >= 0; i-- {
-			if f.Observes(next.Out[i].Commit) {
+			obs, err := f.Observes(next.Out[i].Commit)
+			if err != nil {
+				return nil, err
+			}
+			if obs {
 				edge = next.Out[i]
 				break
 			}
@@ -225,6 +239,7 @@ func HumanReadable(r Repo, f, prev Frontier, path string, conflicts []Conflict, 
 	return bytes.Join(lines, join), nil
 }
 
+// TODO: This comment isn't close to being correct, but I'm not sure what the correct comment is.
 // ReadVersions returns a []Version with one Version for each conflicting view of the file.  If prev
 // is not nil, then one of the Versions will correspond to the conflicting commits, and all other
 // Versions will contain a single conflicting commit.
@@ -284,8 +299,11 @@ type addToFrontier struct {
 	add map[string]bool
 }
 
-func (f *addToFrontier) Observes(commit string) bool {
-	return f.f.Observes(commit) || f.add[commit]
+func (f *addToFrontier) Observes(commit string) (bool, error) {
+	if f.add[commit] {
+		return true, nil
+	}
+	return f.f.Observes(commit)
 }
 
 type removeFromFrontier struct {
@@ -293,30 +311,48 @@ type removeFromFrontier struct {
 	remove map[string]bool
 }
 
-func (f *removeFromFrontier) Observes(commit string) bool {
-	return f.f.Observes(commit) && !f.remove[commit]
+func (f *removeFromFrontier) Observes(commit string) (bool, error) {
+	if f.remove[commit] {
+		return false, nil
+	}
+	return f.f.Observes(commit)
 }
+
+func ReadFile(r Repo, f Frontier, path string, metadata *ReadMetadata) ([][]byte, error) {
+	return ReadVersion(r, f, "src:"+path, "snk:"+path, metadata)
+}
+
+var (
+	ErrNoObserve = fmt.Errorf("not observable from this frontier")
+)
 
 // Any fields within metadata that are non-nil will be filled with the relevant data.
 // TODO: Need to be able to distinguish between an empty file, a non-existent file, and a conflict.
 func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) ([][]byte, error) {
+	if start == end {
+		return nil, fmt.Errorf("start and end were the same node")
+	}
 	var buf [][]byte
 	n := r.GetNode(start)
 	if n == nil {
 		startHead := r.GetRef(start)
 		if startHead == "" {
-			return nil, fmt.Errorf("failed to find start node %s", start)
+			return nil, ErrNoObserve
 		}
 		n = r.GetNode(startHead)
 	}
 	if n == nil {
-		return nil, fmt.Errorf("failed to find start node %s", start)
+		return nil, ErrNoObserve
 	}
 	if len(n.In) == 0 && len(n.Out) == 0 {
 		return nil, fmt.Errorf("start node was invalid, it had no input or output edges")
 	}
-	if start == end {
-		return nil, fmt.Errorf("start and end were the same node")
+	obs, err := f.Observes(n.GetOut()[0].GetCommit())
+	if err != nil {
+		return nil, err
+	}
+	if !obs {
+		return nil, ErrNoObserve
 	}
 	prev := n
 
@@ -337,7 +373,11 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 	for {
 		for i := len(n.Out) - 1; i >= 0; i-- {
 			e := n.Out[i]
-			if !f.Observes(e.Commit) {
+			obs, err := f.Observes(e.Commit)
+			if err != nil {
+				return nil, err
+			}
+			if !obs {
 				fmt.Printf("Not taking edge from commit %s\n", e.Commit)
 				continue
 			}
@@ -652,7 +692,7 @@ func CalculateNodeHashes(commit, prev string, content [][]byte) (head, tail stri
 // TODO: Implement this thing, probably want to store which commits the Frontier *doesn't* observe,
 // 		 since that set will typically be much smaller than those it *does* observe.
 type Frontier interface {
-	Observes(commit string) bool
+	Observes(commit string) (bool, error)
 }
 
 func HashEdge(e *jpb.Edge) string {

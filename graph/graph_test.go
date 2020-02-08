@@ -93,12 +93,14 @@ func TestSplitNode(t *testing.T) {
 			})
 		})
 		Convey("doesn't split if the split point is at the end of an existing node", func() {
-			before := len(r.Nodes)
+			nodes := make([]string, 8)
+			before := r.ListNodes("", nodes)
 			a, b, err := graph.SplitNode(r, head, 7)
 			So(err, ShouldBeNil)
 			So(a, ShouldEqual, tail)
 			So(b, ShouldEqual, "snk:sample.txt")
-			So(len(r.Nodes), ShouldEqual, before)
+			after := r.ListNodes("", nodes)
+			So(after, ShouldEqual, before)
 		})
 	})
 }
@@ -491,6 +493,8 @@ func TestVerge(t *testing.T) {
 		So(contentToString(data), ShouldEqual, "alpha.bravo.charlie.delta.echo.foxtrot.golf.hotel.india.")
 		So(ranges, ShouldHaveLength, 1)
 		head := ranges[0].Node
+
+		// This capitalizes charlie through foxtrot.
 		c1 := &jpb.Commit{
 			Deps: []string{graph.HashCommit(c0)},
 			EdgeRefs: []*jpb.EdgeRef{
@@ -528,7 +532,7 @@ func TestVerge(t *testing.T) {
 		}
 		So(graph.Apply(r, c2), ShouldBeNil)
 
-		// This commit replaces resolves the conflict between c1 and c2.
+		// This commit resolves the conflict between c1 and c2.
 		c3 := &jpb.Commit{
 			Deps: []string{graph.HashCommit(c0), graph.HashCommit(c1), graph.HashCommit(c2)},
 			EdgeRefs: []*jpb.EdgeRef{
@@ -746,13 +750,6 @@ func TestVerge(t *testing.T) {
 			}
 			So(graph.Apply(r, c6b), ShouldBeNil)
 
-			fmt.Printf("c0(%s): %s\n", graph.HashCommit(c0), "all the stuff")
-			fmt.Printf("c5a(%s): %s\n", graph.HashCommit(c5a), "BRAVO.CHARLIE")
-			fmt.Printf("c5b(%s): %s\n", graph.HashCommit(c5b), "ECHO.FOXTROT")
-			fmt.Printf("c6a(%s): %s\n", graph.HashCommit(c6a), "brAvO.chArlIE.dEltA")
-			fmt.Printf("c6b(%s): %s\n", graph.HashCommit(c6b), "fOxtrOt")
-			fmt.Printf("Advancing Verge\n")
-
 			f := explicitFrontier(c0, c5a, c5b, c6a, c6b)
 			// We'll set these values with one of the two following Convey stanzas.  Either we
 			// will advance the verge all the way forward, then backward, or we will advance it
@@ -803,27 +800,32 @@ func TestVerge(t *testing.T) {
 			So(conflictsList, ShouldContain, graph.HashCommit(c5b))
 			So(conflictsList, ShouldContain, graph.HashCommit(c6a))
 			So(conflictsList, ShouldContain, graph.HashCommit(c6b))
-			versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, conflicts, []byte("."))
+			groups := [][]string{
+				{},
+				{graph.HashCommit(c5a), graph.HashCommit(c5b)},
+				{graph.HashCommit(c6a), graph.HashCommit(c6b)},
+			}
+			versions, err := graph.ReadVersions(r, f, explicitFrontier(c0, c5a, c5b), r.GetRef(start), end, groups, []byte("."))
 			So(err, ShouldBeNil)
 			So(versions, ShouldNotBeNil)
 			So(len(versions), ShouldEqual, 3)
 			unhit := map[string]bool{
-				"alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf": true,
-				"alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf": true,
-				"alpha.bravo.charlie.delta.echo.fOxtrOt.golf": true,
+				"alpha.bravo.charlie.delta.echo.foxtrot.golf": true, // Base
+				"alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf": true, // c5a and c5b
+				"alpha.brAvO.chArlIE.dEltA.echo.fOxtrOt.golf": true, // c6a and c6b
 			}
 			for i := range versions {
 				s := string(versions[i].Data)
 				delete(unhit, s)
-				if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
+				if s == "alpha.bravo.charlie.delta.echo.foxtrot.golf" {
+					So(len(versions[i].Commits), ShouldEqual, 0)
+				} else if s == "alpha.BRAVO.CHARLIE.delta.ECHO.FOXTROT.golf" {
 					So(len(versions[i].Commits), ShouldEqual, 2)
 					So(versions[i].Commits[graph.HashCommit(c5a)], ShouldBeTrue)
 					So(versions[i].Commits[graph.HashCommit(c5b)], ShouldBeTrue)
-				} else if s == "alpha.brAvO.chArlIE.dEltA.echo.foxtrot.golf" {
-					So(len(versions[i].Commits), ShouldEqual, 1)
+				} else if s == "alpha.brAvO.chArlIE.dEltA.echo.fOxtrOt.golf" {
+					So(len(versions[i].Commits), ShouldEqual, 2)
 					So(versions[i].Commits[graph.HashCommit(c6a)], ShouldBeTrue)
-				} else if s == "alpha.bravo.charlie.delta.echo.fOxtrOt.golf" {
-					So(len(versions[i].Commits), ShouldEqual, 1)
 					So(versions[i].Commits[graph.HashCommit(c6b)], ShouldBeTrue)
 				} else {
 					t.Errorf("unexpected version %q", s)
@@ -1109,7 +1111,7 @@ func TestReadVersions(t *testing.T) {
 			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c2))
 			So(snippet{r, explicitFrontier(c0, c1), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.BRAVO.CHARLIE.DELTA.echo.foxtrot")
 			So(snippet{r, explicitFrontier(c0, c2), conflicts[0].Start, conflicts[0].End}, shouldRead, "alpha.bravo.CHARLIE.DELTA.ECHO.foxtrot")
-			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Groups, []byte{'.'})
 			So(err, ShouldBeNil)
 			So(versions, ShouldHaveLength, 2)
 		}
@@ -1122,7 +1124,7 @@ func TestReadVersions(t *testing.T) {
 			So(conflicts[0].Commits, ShouldContainKey, graph.HashCommit(c4))
 			So(snippet{r, explicitFrontier(c0, c3), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.india.JULIET")
 			So(snippet{r, explicitFrontier(c0, c4), conflicts[0].Start, conflicts[0].End}, shouldRead, "hotel.INDIA")
-			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Commits, []byte{'.'})
+			versions, err := graph.ReadVersions(r, allFrontier{}, nil, conflicts[0].Start, conflicts[0].End, conflicts[0].Groups, []byte{'.'})
 			So(err, ShouldBeNil)
 			So(versions, ShouldHaveLength, 2)
 		}
@@ -1227,7 +1229,7 @@ func shouldRead(_a interface{}, _bs ...interface{}) string {
 
 type allFrontier struct{}
 
-func (allFrontier) Observes(string) bool { return true }
+func (allFrontier) Observes(string) (bool, error) { return true, nil }
 
 func explicitFrontier(commits ...*jpb.Commit) simpleFrontier {
 	s := make(simpleFrontier)
@@ -1247,7 +1249,7 @@ func explicitFrontierStrings(commits ...string) simpleFrontier {
 
 type simpleFrontier map[string]bool
 
-func (s simpleFrontier) Observes(c string) bool { return s[c] }
+func (s simpleFrontier) Observes(c string) (bool, error) { return s[c], nil }
 
 type commitOnlyRepo struct {
 	graph.Repo

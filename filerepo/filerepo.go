@@ -1,4 +1,4 @@
-package testutils
+package filerepo
 
 import (
 	"bytes"
@@ -18,25 +18,25 @@ type fileRepo struct {
 	db *bolt.DB
 }
 
-func MakeFileRepo(dir string) graph.Repo {
+func Make(dir string) (graph.Repo, error) {
 	os.Mkdir(dir, 0777)
 	db, err := bolt.Open(filepath.Join(dir, "db"), 0600, nil)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, name := range []string{"ref", "node", "content", "commit", "rdep"} {
-			if _, err := tx.CreateBucket([]byte(name)); err != nil {
+			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return fmt.Errorf("create bucket: %s", err)
 			}
 		}
 		return nil
 	}); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 	return &fileRepo{
 		db: db,
-	}
+	}, nil
 }
 
 func (r *fileRepo) GetRef(ptr string) string {

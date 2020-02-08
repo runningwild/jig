@@ -83,7 +83,11 @@ func (v *Verge) move(node string, mov mover) {
 		// We can ignore this edge if the frontier doesn't observe it, or if it is a join edge,
 		// since in that case that commit will continue through the entire node and the verge will
 		// still be cutting it after it has passed it.
-		if !v.f.Observes(e.Commit) || e.Join {
+		obs, err := v.f.Observes(e.Commit)
+		if err != nil {
+			panic(err)
+		}
+		if !obs || e.Join {
 			continue
 		}
 
@@ -93,7 +97,11 @@ func (v *Verge) move(node string, mov mover) {
 		v.rdeps.removeNode(e.Commit)
 	}
 	for _, e := range mov.GetOut(n) {
-		if !v.f.Observes(e.Commit) {
+		obs, err := v.f.Observes(e.Commit)
+		if err != nil {
+			panic(err)
+		}
+		if !obs {
 			continue
 		}
 		mov.ForwardEdges()[e.Commit] = mov.GetHead(mov.GetNode(e.Node))
@@ -148,7 +156,11 @@ func (v *Verge) Conflicts() []string {
 	v.state()
 	visible := make(map[string]bool)
 	for c := range v.forward {
-		if v.f.Observes(c) {
+		obs, err := v.f.Observes(c)
+		if err != nil {
+			panic(err)
+		}
+		if obs {
 			visible[c] = true
 		}
 	}
@@ -204,7 +216,11 @@ func (v *Verge) look(mov mover) []string {
 		count := 0
 		observable := 0
 		for _, e := range mov.GetIn(n) {
-			if !v.f.Observes(e.Commit) {
+			obs, err := v.f.Observes(e.Commit)
+			if err != nil {
+				panic(err)
+			}
+			if !obs {
 				continue
 			}
 			observable++
