@@ -1,4 +1,4 @@
-package jig
+package utils
 
 import (
 	"fmt"
@@ -167,7 +167,7 @@ func boolsAsInts(b []plusOrMinusType) string {
 	return v
 }
 
-var readersToLinesBufferSize int = 10000
+const ReadersToLinesBufferSize int = 10000
 
 func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 	var mu sync.RWMutex
@@ -183,7 +183,7 @@ func ReadersToLines(fa, fb io.Reader) ([][]uint64, uint64, error) {
 		// convert those into uint64s, then append those values onto *v.
 		go func(f io.Reader, v *[]uint64) {
 			defer wg.Done()
-			buf := make([]byte, readersToLinesBufferSize)
+			buf := make([]byte, ReadersToLinesBufferSize)
 			var cur []byte
 			for {
 				amt, err := f.Read(buf)
@@ -246,13 +246,13 @@ func DumbSuffixArray(v []uint64) []int {
 	return r
 }
 
-// LCS finds the Longest Common Substring between two 'strings' of uint64.  ai and bi are the start
-// of the substring in each of the input arrays, and length is the length of the common substring.
-// If there is no common substring, ai and bi will be -1 and length will be 0.
+// CommonSubstring indicates a common substring between two strings.  Ai and Bi are the indices into
+// the first and second string, and Length is the length of the common substring starting at those indices.
 type CommonSubstring struct {
 	Ai, Bi, Length int
 }
 
+// LCS2 finds the maximal length common substrings between two 'strings' of uint64.
 func LCS2(a, b []uint64) []CommonSubstring {
 	var input []uint64
 	var max uint64

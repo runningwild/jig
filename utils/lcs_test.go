@@ -1,4 +1,4 @@
-package jig
+package utils_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/runningwild/jig/utils"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -24,12 +25,15 @@ func TestReadersToLines(t *testing.T) {
 		[2][]byte{makeRandomInput(1000, 0), makeRandomEdits(makeRandomInput(1000, 0), 5, 0)},
 		[2][]byte{makeRandomInput(1000, 0), makeRandomEdits(makeRandomInput(1000, 0), 10, 0)},
 		[2][]byte{makeRandomInput(10000, 0), makeRandomEdits(makeRandomInput(10000, 0), 10, 0)},
+		// The first parameter is actually number of lines, but this will guarantee that the input
+		// arrays are at least as long as the reader buffer size.
+		[2][]byte{makeRandomInput(utils.ReadersToLinesBufferSize, 0), makeRandomEdits(makeRandomInput(utils.ReadersToLinesBufferSize, 0), 10, 0)},
 	}
 
 	Convey("ReadersToLines", t, func() {
 		Convey("can properly split several newlines in a row", func() {
 			input := []byte("a\n\n\nb\n\n\n")
-			lines, max, err := ReadersToLines(bytes.NewBuffer(input), bytes.NewBuffer(input))
+			lines, max, err := utils.ReadersToLines(bytes.NewBuffer(input), bytes.NewBuffer(input))
 			So(err, ShouldBeNil)
 			So(max, ShouldEqual, 4)
 			So(lines, shouldMatchLines, [][]uint64{[]uint64{0, 1, 1, 2, 1, 1}, []uint64{0, 1, 1, 2, 1, 1}})
@@ -37,18 +41,11 @@ func TestReadersToLines(t *testing.T) {
 		Convey("matches the simple reader", func() {
 			Convey("with a different buffer sizes", func() {
 				for _, input := range inputs {
-					prevSize := readersToLinesBufferSize
-					defer func() {
-						readersToLinesBufferSize = prevSize
-					}()
-					for _, size := range []int{1, 2, 5, 10, 100, 100000} {
-						readersToLinesBufferSize = size
-						lines, max, err := ReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
-						So(err, ShouldBeNil)
-						wantLines, wantMax, _ := simpleReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
-						So(max, ShouldEqual, wantMax)
-						So(lines, shouldMatchLines, wantLines)
-					}
+					lines, max, err := utils.ReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+					So(err, ShouldBeNil)
+					wantLines, wantMax, _ := simpleReadersToLines(bytes.NewBuffer(input[0]), bytes.NewBuffer(input[1]))
+					So(max, ShouldEqual, wantMax)
+					So(lines, shouldMatchLines, wantLines)
 				}
 			})
 
@@ -56,42 +53,33 @@ func TestReadersToLines(t *testing.T) {
 	})
 }
 
-func doBenchReadersToLines(b *testing.B, lines, edits int) {
-	b.StopTimer()
-	inputA := makeRandomInput(lines, 123)
-	inputB := makeRandomEdits(inputA, edits, 123)
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		ReadersToLines(bytes.NewBuffer(inputA), bytes.NewBuffer(inputB))
+func BenchmarkReadersToLines(b *testing.B) {
+	type testcase struct {
+		lines, edits int
 	}
-}
-
-func BenchmarkReadersToLines_1000_Same(b *testing.B) {
-	doBenchReadersToLines(b, 1000, 0)
-}
-func BenchmarkReadersToLines_1000_Similar(b *testing.B) {
-	doBenchReadersToLines(b, 1000, 3)
-}
-func BenchmarkReadersToLines_1000_Different(b *testing.B) {
-	doBenchReadersToLines(b, 1000, 50)
-}
-func BenchmarkReadersToLines_10000_Same(b *testing.B) {
-	doBenchReadersToLines(b, 10000, 0)
-}
-func BenchmarkReadersToLines_10000_Similar(b *testing.B) {
-	doBenchReadersToLines(b, 10000, 3)
-}
-func BenchmarkReadersToLines_10000_Different(b *testing.B) {
-	doBenchReadersToLines(b, 10000, 50)
-}
-func BenchmarkReadersToLines_100000_Same(b *testing.B) {
-	doBenchReadersToLines(b, 100000, 0)
-}
-func BenchmarkReadersToLines_100000_Similar(b *testing.B) {
-	doBenchReadersToLines(b, 100000, 3)
-}
-func BenchmarkReadersToLines_100000_Different(b *testing.B) {
-	doBenchReadersToLines(b, 100000, 50)
+	for _, tc := range []testcase{
+		{1000, 0},
+		{1000, 3},
+		{1000, 50},
+		{10000, 0},
+		{10000, 3},
+		{10000, 50},
+		{100000, 0},
+		{100000, 3},
+		{100000, 50},
+		{100000, 500},
+		{100000, 5000},
+	} {
+		b.Run(fmt.Sprintf("benchmark-readerstolines-%d_%d", tc.lines, tc.edits), func(b *testing.B) {
+			b.StopTimer()
+			inputA := makeRandomInput(tc.lines, 123)
+			inputB := makeRandomEdits(inputA, tc.edits, 123)
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				utils.ReadersToLines(bytes.NewBuffer(inputA), bytes.NewBuffer(inputB))
+			}
+		})
+	}
 }
 
 func shouldMatchLines(_a interface{}, _bs ...interface{}) string {
@@ -260,8 +248,8 @@ func TestSuffixArray(t *testing.T) {
 				{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0},
 			}
 			for _, test := range tests {
-				got := InducedSuffixArray(test)
-				want := DumbSuffixArray(test)
+				got := utils.InducedSuffixArray(test)
+				want := utils.DumbSuffixArray(test)
 				So(got, ShouldResemble, want)
 			}
 		})
@@ -274,8 +262,8 @@ func TestSuffixArray(t *testing.T) {
 				for i := range input {
 					input[i] = uint64(rng.Intn(alphabet))
 				}
-				got := InducedSuffixArray(input)
-				want := DumbSuffixArray(input)
+				got := utils.InducedSuffixArray(input)
+				want := utils.DumbSuffixArray(input)
 				So(got, ShouldResemble, want)
 			}
 		})
@@ -288,115 +276,114 @@ func TestSuffixArray(t *testing.T) {
 				for i := range input {
 					input[i] = uint64(rng.Intn(alphabet))
 				}
-				got := InducedSuffixArray(input)
-				want := DumbSuffixArray(input)
+				got := utils.InducedSuffixArray(input)
+				want := utils.DumbSuffixArray(input)
 				So(got, ShouldResemble, want)
 			}
 		})
 	})
 }
 
-func doBench(b *testing.B, length, alphabet int) {
-	b.StopTimer()
-	v := make([]uint64, length)
-	rng := rand.New(rand.NewSource(123))
-	for i := range v {
-		v[i] = uint64(rng.Intn(alphabet))
+func BenchmarkInducedSuffixArray(b *testing.B) {
+	type testcase struct {
+		length, alphabet int
 	}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		InducedSuffixArray(v)
+	for _, tc := range []testcase{
+		{10, 10},
+		{100, 10},
+		{1000, 10},
+		{10000, 10},
+		{100000, 10},
+		{1000000, 10},
+		{1000, 1000},
+		{10000, 1000},
+		{100000, 1000},
+		{1000000, 1000},
+	} {
+		b.Run(fmt.Sprintf("benchmark-isa-%d_%d", tc.length, tc.alphabet), func(b *testing.B) {
+			b.StopTimer()
+			v := make([]uint64, tc.length)
+			rng := rand.New(rand.NewSource(123))
+			for i := range v {
+				v[i] = uint64(rng.Intn(tc.alphabet))
+			}
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				utils.InducedSuffixArray(v)
+			}
+		})
 	}
 }
 
-func BenchmarkSA_1000_10(b *testing.B) {
-	doBench(b, 1000, 10)
-}
-func BenchmarkSA_10000_10(b *testing.B) {
-	doBench(b, 10000, 10)
-}
-func BenchmarkSA_100000_10(b *testing.B) {
-	doBench(b, 100000, 10)
-}
-func BenchmarkSA_1000000_10(b *testing.B) {
-	doBench(b, 1000000, 10)
-}
-func BenchmarkSA_1000_1000(b *testing.B) {
-	doBench(b, 1000, 1000)
-}
-func BenchmarkSA_10000_1000(b *testing.B) {
-	doBench(b, 10000, 1000)
-}
-func BenchmarkSA_100000_1000(b *testing.B) {
-	doBench(b, 100000, 1000)
-}
-func BenchmarkSA_1000000_1000(b *testing.B) {
-	doBench(b, 1000000, 1000)
+func TestLCS(t *testing.T) {
+	Convey("LCS finds the longest common substring", t, func() {
+		Convey("at the start of one string and end of the other", func() {
+			css := utils.LCS2(
+				toUint64s("abcdefghijklmnopqrstuvwxyz"),
+				toUint64s("012345678abcdefghijklmnopqrs"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 9)
+			So(css[0].Length, ShouldEqual, 19)
+		})
+		Convey("at the end of one string and start of the other", func() {
+			css := utils.LCS2(
+				toUint64s("012345678abcdefghijklmnopqrs"),
+				toUint64s("abcdefghijklmnopqrstuvwxyz"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 9)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 19)
+		})
+		Convey("when the strings are equal", func() {
+			css := utils.LCS2(
+				toUint64s("abcdefghijklmnopqrstuvwxyz"),
+				toUint64s("abcdefghijklmnopqrstuvwxyz"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 26)
+		})
+		Convey("when the strings have no common values", func() {
+			css := utils.LCS2(
+				toUint64s("abcdefghijklmnopqrstuvwxyz"),
+				toUint64s("0123456789"))
+			So(css, ShouldHaveLength, 0)
+		})
+	})
 }
 
-// func TestLCS(t *testing.T) {
-// 	Convey("LCS finds the longest common substring", t, func() {
-// 		Convey("at the start of one string and end of the other", func() {
-// 			ai, bi, length := LCS(
-// 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
-// 				toUint64s("012345678abcdefghijklmnopqrs"))
-// 			So(ai, ShouldEqual, 0)
-// 			So(bi, ShouldEqual, 9)
-// 			So(length, ShouldEqual, 19)
-// 		})
-// 		Convey("at the end of one string and start of the other", func() {
-// 			ai, bi, length := LCS(
-// 				toUint64s("012345678abcdefghijklmnopqrs"),
-// 				toUint64s("abcdefghijklmnopqrstuvwxyz"))
-// 			So(ai, ShouldEqual, 9)
-// 			So(bi, ShouldEqual, 0)
-// 			So(length, ShouldEqual, 19)
-// 		})
-// 		Convey("when the strings are equal", func() {
-// 			ai, bi, length := LCS(
-// 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
-// 				toUint64s("abcdefghijklmnopqrstuvwxyz"))
-// 			So(ai, ShouldEqual, 0)
-// 			So(bi, ShouldEqual, 0)
-// 			So(length, ShouldEqual, 26)
-// 		})
-// 		Convey("when the strings have no common values", func() {
-// 			_, _, length := LCS(
-// 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
-// 				toUint64s("0123456789"))
-// 			So(length, ShouldEqual, 0)
-// 		})
-// 	})
-// }
+func toUint64s(s string) []uint64 {
+	var v []uint64
+	for _, r := range s {
+		v = append(v, uint64(r))
+	}
+	return v
+}
 
-// func toUint64s(s string) []uint64 {
-// 	var v []uint64
-// 	for _, r := range s {
-// 		v = append(v, uint64(r))
-// 	}
-// 	return v
-// }
-
-// func benchmark(b *testing.B, lenA, lenB, overlap int) {
-// 	b.StopTimer()
-// 	ab := make([]uint64, lenA+lenB-overlap)
-// 	for i := range ab {
-// 		ab[i] = uint64(i)
-// 	}
-// 	b.StartTimer()
-// 	for i := 0; i < b.N; i++ {
-// 		LCS(ab[0:lenA], ab[overlap:])
-// 	}
-// }
-
-// func BenchmarkLCS_100_100_halfequal(b *testing.B) {
-// 	benchmark(b, 100, 100, 50)
-// }
-
-// func BenchmarkLCS_1000_1000_halfequal(b *testing.B) {
-// 	benchmark(b, 1000, 1000, 500)
-// }
-
-// func BenchmarkLCS_10000_10000_halfequal(b *testing.B) {
-// 	benchmark(b, 10000, 10000, 5000)
-// }
+func BenchmarkLCS(b *testing.B) {
+	type testcase struct {
+		lena, lenb, overlap int
+	}
+	for _, tc := range []testcase{
+		{100, 100, 50},
+		{1000, 1000, 500},
+		{10000, 10000, 5000},
+		{10000, 10000, 10},
+		{10000, 10000, 10000 - 10},
+		{100, 10000, 10},
+		{100, 10000, 100},
+	} {
+		b.Run(fmt.Sprintf("benchmark-lcs-%d_%d_%d", tc.lena, tc.lenb, tc.overlap), func(b *testing.B) {
+			b.StopTimer()
+			ab := make([]uint64, tc.lena+tc.lenb-tc.overlap)
+			for i := range ab {
+				ab[i] = uint64(i)
+			}
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				utils.LCS2(ab[0:tc.lena], ab[tc.overlap:])
+			}
+		})
+	}
+}

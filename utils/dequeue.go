@@ -1,4 +1,4 @@
-package jig
+package utils
 
 type Dequeue struct {
 	back, front []int

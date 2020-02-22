@@ -1,4 +1,4 @@
-package jig
+package utils
 
 import (
 	"bytes"

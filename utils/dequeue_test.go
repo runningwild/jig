@@ -1,9 +1,9 @@
-package jig_test
+package utils_test
 
 import (
 	"testing"
 
-	"github.com/runningwild/jig"
+	"github.com/runningwild/jig/utils"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -11,7 +11,7 @@ import (
 func TestDequeue(t *testing.T) {
 	Convey("Dequeue", t, func() {
 		Convey("can push front and pop front in the opposite order", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushFront(0)
 			d.PushFront(1)
 			d.PushFront(4)
@@ -22,7 +22,7 @@ func TestDequeue(t *testing.T) {
 			So(d.PopFront(), ShouldEqual, 0)
 		})
 		Convey("can push back and pop back in the opposite order", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushBack(0)
 			d.PushBack(1)
 			d.PushBack(4)
@@ -33,7 +33,7 @@ func TestDequeue(t *testing.T) {
 			So(d.PopBack(), ShouldEqual, 0)
 		})
 		Convey("can push front and pop back in the same order", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushFront(0)
 			d.PushFront(1)
 			d.PushFront(4)
@@ -44,7 +44,7 @@ func TestDequeue(t *testing.T) {
 			So(d.PopBack(), ShouldEqual, 5)
 		})
 		Convey("can push back and pop front in the same order", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushBack(0)
 			d.PushBack(1)
 			d.PushBack(4)
@@ -55,7 +55,7 @@ func TestDequeue(t *testing.T) {
 			So(d.PopFront(), ShouldEqual, 5)
 		})
 		Convey("can index properly", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushFront(4)
 			d.PushFront(3)
 			d.PushBack(5)
@@ -66,7 +66,7 @@ func TestDequeue(t *testing.T) {
 			So(d.At(3), ShouldEqual, 6)
 		})
 		Convey("can index properly after pushing and popping", func() {
-			var d jig.Dequeue
+			var d utils.Dequeue
 			d.PushFront(0)
 			d.PushFront(-1)
 			d.PushBack(1)
