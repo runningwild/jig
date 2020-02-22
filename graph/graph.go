@@ -329,6 +329,9 @@ var (
 // Any fields within metadata that are non-nil will be filled with the relevant data.
 // TODO: Need to be able to distinguish between an empty file, a non-existent file, and a conflict.
 func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) ([][]byte, error) {
+	if metadata == nil {
+		metadata = &ReadMetadata{}
+	}
 	if start == end {
 		return nil, fmt.Errorf("start and end were the same node")
 	}
@@ -337,12 +340,12 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 	if n == nil {
 		startHead := r.GetRef(start)
 		if startHead == "" {
-			return nil, ErrNoObserve
+			return nil, fmt.Errorf("missing head ref %q: %w", start, ErrNoObserve)
 		}
 		n = r.GetNode(startHead)
 	}
 	if n == nil {
-		return nil, ErrNoObserve
+		return nil, fmt.Errorf("dangling ref: %w", ErrNoObserve)
 	}
 	if len(n.In) == 0 && len(n.Out) == 0 {
 		return nil, fmt.Errorf("start node was invalid, it had no input or output edges")
@@ -352,7 +355,7 @@ func ReadVersion(r Repo, f Frontier, start, end string, metadata *ReadMetadata) 
 		return nil, err
 	}
 	if !obs {
-		return nil, ErrNoObserve
+		return nil, fmt.Errorf("this file has not been created under this frontier: %w", ErrNoObserve)
 	}
 	prev := n
 
