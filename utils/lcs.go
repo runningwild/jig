@@ -1,28 +1,10 @@
 package utils
 
 import (
-	"fmt"
 	"io"
 	"sort"
 	"sync"
-	"time"
 )
-
-func stringToUint64s(s string) []uint64 {
-	var v []uint64
-	for _, r := range s {
-		v = append(v, uint64(r))
-	}
-	return v
-}
-
-func main2() {
-	in := stringToUint64s("abcdefghij")
-	skew := InducedSuffixArray(in)
-	dumb := DumbSuffixArray(in)
-	fmt.Printf("Skew: %v\n", skew)
-	fmt.Printf("Dumb: %v\n", dumb)
-}
 
 func InducedSuffixArray(s []uint64) []int {
 	m := make(map[uint64]uint64)
@@ -51,7 +33,7 @@ func inducedSuffixArrayHelper(T []uint64) []int {
 	if len(T) == 0 {
 		return []int{}
 	}
-	t := make([]plusOrMinusType, len(T)) // true indicates - type
+	t := make([]plusOrMinusType, len(T))
 	t[len(t)-1] = minusType
 	σ := T[len(T)-1]
 	for i := len(T) - 2; i >= 0; i-- {
@@ -270,11 +252,9 @@ func LCS2(a, b []uint64) []CommonSubstring {
 			max = v
 		}
 	}
+	input = append(input, max+2)
 	input[middle] = max + 1
-	// start := time.Now()
 	sa := InducedSuffixArray(input)
-	// fmt.Printf("SA time: %v\n", time.Since(start))
-
 	var pairs [][3]int
 	for i := 0; i < len(sa)-1; i++ {
 		if (sa[i] < middle) == (sa[i+1] < middle) {
@@ -309,7 +289,7 @@ func LCS2(a, b []uint64) []CommonSubstring {
 		return pairs[i][1] < pairs[j][1]
 	})
 	// for _, p := range pairs {
-	// 	fmt.Printf("%v\n", p)
+	// 	fmt.Printf("pair: %v\n", p)
 	// }
 	var css []CommonSubstring
 	for {
@@ -367,68 +347,4 @@ func LCS2(a, b []uint64) []CommonSubstring {
 	}
 	// fmt.Printf("Got %d runs with %d pairs remaining\n", len(css), len(pairs))
 	return css
-}
-
-func LCS(a, b []uint64) (ai, bi, length int) {
-	// Construct a single list containing all of the suffixes for each string.
-	var sufs []suf
-	for i := range a {
-		sufs = append(sufs, suf{suffix: a[i:], start: i, source: 0})
-	}
-	for i := range b {
-		sufs = append(sufs, suf{suffix: b[i:], start: i, source: 1})
-	}
-
-	start := time.Now()
-	// Sort the suffixes lexicographically
-	sort.Slice(sufs, func(i, j int) bool {
-		a := sufs[i].suffix
-		b := sufs[j].suffix
-		for k := 0; k < len(a) && k < len(b); k++ {
-			if a[k] == b[k] {
-				continue
-			}
-			return a[k] < b[k]
-		}
-		return false
-	})
-	fmt.Printf("SA Time: %v\n", time.Since(start))
-
-	// Find adjacent pairs in the array such that the two elements don't both come from the same
-	// string.  Such pairs indicate a common substring, and all common substrings will be
-	// represented in this way, so the longest one is the LCS.
-	length = 0
-	index := -1
-	for i := 0; i < len(sufs)-1; i++ {
-		if sufs[i].source == sufs[i+1].source {
-			continue
-		}
-		var prefix int
-		a := sufs[i].suffix
-		b := sufs[i+1].suffix
-		for prefix = 0; prefix < len(a) && prefix < len(b); prefix++ {
-			if a[prefix] != b[prefix] {
-				break
-			}
-		}
-		if prefix > length {
-			length = prefix
-			index = i
-		}
-	}
-	if index == -1 {
-		return -1, -1, 0
-	}
-	ai = sufs[index].start
-	bi = sufs[index+1].start
-	if sufs[index].source == 1 {
-		ai, bi = bi, ai
-	}
-	return
-}
-
-type suf struct {
-	suffix []uint64
-	start  int
-	source int
 }

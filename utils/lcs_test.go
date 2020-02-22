@@ -317,6 +317,42 @@ func BenchmarkInducedSuffixArray(b *testing.B) {
 
 func TestLCS(t *testing.T) {
 	Convey("LCS finds the longest common substring", t, func() {
+		Convey("on short strings", func() {
+			css := utils.LCS2(
+				toUint64s("abc"),
+				toUint64s("abc"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 3)
+		})
+		Convey("on very short self-similar strings", func() {
+			css := utils.LCS2(
+				toUint64s("aa"),
+				toUint64s("aa"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 2)
+		})
+		Convey("on medium self-similar strings", func() {
+			css := utils.LCS2(
+				toUint64s("abba"),
+				toUint64s("abba"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 4)
+		})
+		Convey("on short self-similar strings", func() {
+			css := utils.LCS2(
+				toUint64s("aba"),
+				toUint64s("aba"))
+			So(css, ShouldHaveLength, 1)
+			So(css[0].Ai, ShouldEqual, 0)
+			So(css[0].Bi, ShouldEqual, 0)
+			So(css[0].Length, ShouldEqual, 3)
+		})
 		Convey("at the start of one string and end of the other", func() {
 			css := utils.LCS2(
 				toUint64s("abcdefghijklmnopqrstuvwxyz"),
