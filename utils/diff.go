@@ -1,12 +1,20 @@
 package utils
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 )
 
 func Diff(a, b [][]byte) []DiffBlock {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	if len(a) == 0 {
+		return []DiffBlock{InsertionBlock{0, len(b)}}
+	}
+	if len(b) == 0 {
+		return []DiffBlock{DeletionBlock{0, len(a)}}
+	}
 	css := GetCommonSubstrings(a, b)
 
 	// Sort by A index so we can find deletions
@@ -17,27 +25,27 @@ func Diff(a, b [][]byte) []DiffBlock {
 	for _, cs := range css {
 		fmt.Printf("%v\n", cs)
 	}
+
+	var dbs []DiffBlock
 	var delA [][2]int
-	if css[0].Ai > 0 {
-		delA = append(delA, [2]int{0, css[0].Length})
-	}
-	for i := 1; i < len(css); i++ {
-		prev := css[i-1].Ai + css[i-1].Length
-		if css[i].Ai > prev {
-			delA = append(delA, [2]int{prev, css[i].Ai - prev})
-		}
-	}
-	if end := css[len(css)-1].Ai + css[len(css)-1].Length; end < len(a) {
-		delA = append(delA, [2]int{end, len(a) - end})
-	}
 	delMap := make(map[int]int)
-	for i := range delA {
-		delMap[delA[i][0]] = delA[i][1]
+	if len(css) > 0 {
+		dbs = append(dbs, DeletionBlock{0, css[0].Ai})
+		for i := 1; i < len(css); i++ {
+			prev := css[i-1].Ai + css[i-1].Length
+			if css[i].Ai > prev {
+				delA = append(delA, [2]int{prev, css[i].Ai - prev})
+			}
+		}
+		if end := css[len(css)-1].Ai + css[len(css)-1].Length; end < len(a) {
+			delA = append(delA, [2]int{end, len(a) - end})
+		}
+		for i := range delA {
+			delMap[delA[i][0]] = delA[i][1]
+		}
 	}
 
 	moves := MinWeightedMoves(css)
-	fmt.Printf("A:\n%s\n", bytes.Join(a, []byte{'\n'}))
-	fmt.Printf("%v\n", moves)
 	sort.Slice(css, func(i, j int) bool {
 		return css[i].Bi < css[j].Bi
 	})
@@ -47,7 +55,6 @@ func Diff(a, b [][]byte) []DiffBlock {
 	}
 	moveIndex := 0
 	bi := 0
-	var dbs []DiffBlock
 	for i := range css {
 		for moveIndex < len(moves) && i > moves[moveIndex][0] {
 			fmt.Printf("<< Block %d moved from here\n", moveIndex)
@@ -74,13 +81,24 @@ func Diff(a, b [][]byte) []DiffBlock {
 			fmt.Printf(">>>\n")
 		}
 		aEnd := css[i].Ai + css[i].Length
-		if delLen := delMap[aEnd]; delLen > 0 {
+		if delLen, ok := delMap[aEnd]; ok {
 			dbs = append(dbs, DeletionBlock{aEnd, delLen})
 			for i := aEnd; i < aEnd+delLen; i++ {
 				fmt.Printf("- %s\n", a[i])
 			}
+			delete(delMap, aEnd)
 		}
 		bi += css[i].Length
+	}
+	if bi < len(b) {
+		dbs = append(dbs, InsertionBlock{bi, len(b) - bi})
+	}
+	for aEnd, delLen := range delMap {
+		dbs = append(dbs, DeletionBlock{aEnd, delLen})
+	}
+	fmt.Printf("DBS:\n")
+	for i, db := range dbs {
+		fmt.Printf("  %d: %T - %v\n", i, db, db)
 	}
 	return dbs
 }
